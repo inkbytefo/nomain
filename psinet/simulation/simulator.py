@@ -49,7 +49,7 @@ class Simulator:
         inp_p = self.config['input_params']
         net_p = self.config['network_params']
         mon_p = self.config['monitor_params']
-        learn_p = self.config['learning_params']
+        learn_p = self.config.get('learning_params', {})
 
         # Device selection
         device = sim_p.get('brian2_device', 'runtime')

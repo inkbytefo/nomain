@@ -7,6 +7,19 @@ This directory contains YAML configurations for running PSINet simulations via t
 - mnist_multi_pattern_performance.yaml
   - Purpose: longer, performance-tuned runs using cpp_standalone and more cycles.
 
+- mnist_deep_hierarchy.yaml
+  - Purpose: two-layer hierarchy (L1→L2) across all digits (0–9) with multi-digit presentation schedule.
+
+Deep schema extensions:
+- network_params.layers: List of layer dicts, each with:
+  - name, num_excitatory, num_inhibitory, enable_lateral_inhibition, lateral_strength
+- connections_params: STDP settings per connection key
+  - Keys:
+    - inp_<first_layer_name_lower> (e.g., inp_l1)
+    - <prev_layer>_<curr_layer> (e.g., l1_l2)
+- simulation_params.present_all_digits: if true, Simulator presents all digits per cycle in shuffled order (duration_per_pattern_ms each)
+
+
 Key parameters (schema overview):
 - run_id: Short name for the run; used in output directory naming.
 - simulation_params:
