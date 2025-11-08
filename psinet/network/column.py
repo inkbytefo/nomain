@@ -29,20 +29,18 @@ class BionicColumn:
         
         # 2. İç Bağlantıları Kur (Sinapslar)
         # Kendi kendine öğrenme için uyarıcı nöronlar arasında STDP sinapsları
-        self.E_to_E_synapse = BionicSynapse(self.excitatory_neurons, self.excitatory_neurons)
-        # Başlangıçta zayıf bağlantılar
-        self.E_to_E_synapse.synapses.w = 'rand() * 0.1' 
+        self.E_to_E_synapse = BionicSynapse(self.excitatory_neurons, self.excitatory_neurons, initial_weight_max=0.1)
         
         # Uyarıcı -> Engelleyici bağlantısı (Rekabeti başlatır)
         # Bu bağlantı öğrenmez, sabittir.
-        self.E_to_I_synapse = BionicSynapse(self.excitatory_neurons, self.inhibitory_neurons)
+        self.E_to_I_synapse = BionicSynapse(self.excitatory_neurons, self.inhibitory_neurons, initial_weight_max=2.0)
         self.E_to_I_synapse.synapses.connect() # Her uyarıcı her engelleyiciyi besler
         self.E_to_I_synapse.synapses.w = 2.0 # Daha güçlü bağlantı
 
         # Engelleyici -> Uyarıcı bağlantısı (Rekabeti uygular)
         # Bu, "Winner-Take-All" mekanizmasının anahtarıdır.
         # Bu da öğrenmez.
-        self.I_to_E_synapse = BionicSynapse(self.inhibitory_neurons, self.excitatory_neurons)
+        self.I_to_E_synapse = BionicSynapse(self.inhibitory_neurons, self.excitatory_neurons, initial_weight_max=3.0)
         self.I_to_E_synapse.synapses.connect() # Her engelleyici her uyarıcıyı baskılar
         self.I_to_E_synapse.synapses.w = -3.0 # Çok güçlü, negatif (baskılayıcı) bağlantı
 

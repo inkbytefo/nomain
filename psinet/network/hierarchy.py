@@ -62,6 +62,7 @@ class Hierarchy:
             A_post=p_inp['a_minus'],
             tau_pre=p_inp['tau_plus_ms']*ms,
             tau_post=p_inp['tau_minus_ms']*ms,
+            initial_weight_max=p_inp.get('initial_weight_max', 0.01),
         )
         self.connections[key_inp] = self.input_to_first_syn
 
@@ -80,6 +81,7 @@ class Hierarchy:
                 A_post=p['a_minus'],
                 tau_pre=p['tau_plus_ms']*ms,
                 tau_post=p['tau_minus_ms']*ms,
+                initial_weight_max=p.get('initial_weight_max', 0.01),
             )
             self.connections[key] = syn
 

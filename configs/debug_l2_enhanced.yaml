@@ -1,0 +1,57 @@
+## Developer: inkbytefo
+## Modified: 2025-11-08
+
+# Enhanced configuration to solve L2 "dead neuron" problem
+run_id: debug_l2_enhanced_v1
+
+simulation_params:
+  brian2_device: runtime
+  duration_per_pattern_ms: 200
+  silence_period_ms: 100
+  cycles: 5
+  present_all_digits: true
+
+input_params:
+  dataset: mnist
+  data_dir: ~/.psinet_data
+  patterns_to_learn: [0, 1, 2, 3]
+  max_rate_hz: 200
+
+network_params:
+  layers:
+    - name: L1
+      num_excitatory: 50
+      num_inhibitory: 12
+      enable_lateral_inhibition: true
+      lateral_strength: 0.2
+    - name: L2
+      num_excitatory: 20
+      num_inhibitory: 6
+      enable_lateral_inhibition: true
+      lateral_strength: 0.3
+
+connections_params:
+  inp_l1:
+    w_max: 0.3
+    a_plus: 0.01
+    a_minus: -0.01
+    tau_plus_ms: 20.0
+    tau_minus_ms: 20.0
+    initial_weight_max: 0.01  # Standard for input connections
+  l1_l2:
+    w_max: 0.7              # Increased from 0.5 to 0.7
+    a_plus: 0.015           # Increased from 0.01 to 0.015
+    a_minus: -0.015         # Increased magnitude for balance
+    tau_plus_ms: 20.0
+    tau_minus_ms: 20.0
+    initial_weight_max: 0.1  # 10x increase from 0.01 to 0.1
+
+monitor_params:
+  record_l1_spikes: true
+  record_input_spikes: false
+  record_weight_subset_size: 50
+
+output_params:
+  base_output_dir: debug_outputs
+  save_plots: true
+  save_raw_data: true

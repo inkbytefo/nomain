@@ -1,35 +1,35 @@
-# Deep hierarchy learning across all MNIST digits
-run_id: mnist_deep_hierarchy_v1
+## Developer: inkbytefo
+## Modified: 2025-11-08
+
+# Debug configuration for L2 neuron activity in runtime mode
+run_id: debug_l2_runtime_v1
 
 simulation_params:
   brian2_device: runtime
-  duration_per_pattern_ms: 250
+  duration_per_pattern_ms: 200
   silence_period_ms: 100
-  cycles: 3
+  cycles: 5
   present_all_digits: true
 
 input_params:
   dataset: mnist
   data_dir: ~/.psinet_data
-  patterns_to_learn: [0,1,2,3,4,5,6,7,8,9]
-  # Optional per-digit image indices; if omitted, index 0 per digit is used
-  # image_indices: [0,0,0,0,0,0,0,0,0,0]
+  patterns_to_learn: [0, 1, 2, 3]
   max_rate_hz: 200
 
 network_params:
   layers:
     - name: L1
-      num_excitatory: 100
-      num_inhibitory: 25
-      enable_lateral_inhibition: true
-      lateral_strength: 0.2
-    - name: L2
       num_excitatory: 50
       num_inhibitory: 12
       enable_lateral_inhibition: true
+      lateral_strength: 0.2
+    - name: L2
+      num_excitatory: 20
+      num_inhibitory: 6
+      enable_lateral_inhibition: true
       lateral_strength: 0.3
 
-# STDP parameters for connections
 connections_params:
   inp_l1:
     w_max: 0.3
@@ -37,21 +37,19 @@ connections_params:
     a_minus: -0.01
     tau_plus_ms: 20.0
     tau_minus_ms: 20.0
-    initial_weight_max: 0.1
   l1_l2:
-    w_max: 0.8
+    w_max: 0.5
     a_plus: 0.01
     a_minus: -0.01
     tau_plus_ms: 20.0
     tau_minus_ms: 20.0
-    initial_weight_max: 0.2
 
 monitor_params:
   record_l1_spikes: true
   record_input_spikes: false
-  record_weight_subset_size: 100
+  record_weight_subset_size: 50
 
 output_params:
-  base_output_dir: outputs
+  base_output_dir: debug_outputs
   save_plots: true
   save_raw_data: true

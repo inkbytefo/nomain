@@ -1,3 +1,5 @@
+## Developer: inkbytefo
+## Modified: 2025-11-08
 from brian2 import Synapses, ms
 from .learning_rules import STDP_EQUATION, STDP_ON_PRE, STDP_ON_POST
 
@@ -5,8 +7,8 @@ class BionicSynapse:
     """
     Nöron grupları arasında öğrenen bağlantıları yönetir.
     """
-    def __init__(self, pre_neurons, post_neurons, tau_pre=20*ms, tau_post=20*ms, 
-                 w_max=0.01, A_pre=0.01, A_post=-0.0105):
+    def __init__(self, pre_neurons, post_neurons, tau_pre=20*ms, tau_post=20*ms,
+                 w_max=0.01, A_pre=0.01, A_post=-0.0105, initial_weight_max=0.01):
         """
         STDP öğrenme kuralına sahip bir sinaps grubu oluşturur.
 
@@ -17,6 +19,7 @@ class BionicSynapse:
             w_max (float): Maksimum sinaptik ağırlık.
             A_pre/A_post (float): Her ateşlemede izlerdeki artış/azalış miktarı.
                                   A_post'un A_pre'den biraz daha negatif olması
+            initial_weight_max (float): Başlangıç sinaptik ağırlıklarının maksimum değeri.
                                   genellikle daha kararlı bir öğrenme sağlar.
         """
         pre_group = pre_neurons.group if hasattr(pre_neurons, 'group') else pre_neurons
@@ -39,7 +42,7 @@ class BionicSynapse:
         self.synapses.Apre = A_pre
         self.synapses.Apost = A_post
         
-        self.synapses.w = 'rand() * 0.01'
+        self.synapses.w = f'rand() * {initial_weight_max}'
     
     def set_learning_params(self, tau_pre=None, tau_post=None, w_max=None, A_pre=None, A_post=None):
         if tau_pre is not None:
