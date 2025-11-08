@@ -1,0 +1,37 @@
+# Configuration for Multi-Pattern Discrimination Task (0 vs 1)
+run_id: "mnist_0_vs_1_v1" # Unique identifier for this run
+
+simulation_params:
+  duration_per_pattern_ms: 1000
+  silence_period_ms: 100
+  cycles: 3
+  brian2_device: "runtime" # 'runtime' or 'cpp_standalone'
+
+input_params:
+  dataset: "mnist"
+  patterns_to_learn: [0, 1] # Digits to be presented
+  image_indices: [1, 2]     # Index of image for '0' and '1' respectively
+  max_rate_hz: 200
+
+network_params:
+  num_excitatory_l1: 100
+  num_inhibitory_l1: 25
+  enable_lateral_inhibition: true
+
+learning_params:
+  # Input -> L1 Excitatory Synapse Parameters
+  w_max_inp_l1: 0.3
+  a_plus_inp_l1: 0.01
+  a_minus_inp_l1: -0.01
+
+monitor_params:
+  record_l1_spikes: true
+  record_input_spikes: false
+  # Record weights from a subset of synapses for efficiency
+  # Records from 100 random synapses connecting input to L1
+  record_weight_subset_size: 100
+
+output_params:
+  base_output_dir: "outputs"
+  save_plots: true
+  save_raw_data: true

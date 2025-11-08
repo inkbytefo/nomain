@@ -145,3 +145,5 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+# Simulation outputs
+outputs/
