@@ -6,12 +6,15 @@ import numpy as np
 from typing import Tuple, Optional
 from scipy.sparse import csr_matrix
 
+# Initialize Taichi with T4 GPU support
+ti.init(device_memory_GB=15)
+
 
 @ti.data_oriented
 class STDPSparseKernel:
     """
     High-performance Taichi kernel for Spike-Timing-Dependent Plasticity with dopamine modulation.
-    Supports 90% sparsity and GPU acceleration for 4090.
+    Supports 90% sparsity and GPU acceleration for T4.
     """
     
     def __init__(self, pre_neurons: int, post_neurons: int, dt: float = 0.001, sparsity: float = 0.9):
@@ -47,9 +50,6 @@ class STDPSparseKernel:
         self.a_minus = ti.field(dtype=ti.f32, shape=())  # LTD amplitude
         self.w_max = ti.field(dtype=ti.f32, shape=())  # Maximum weight
         self.dopamine = ti.field(dtype=ti.f32, shape=())  # Global dopamine level
-        
-        # Sparse matrix builder for efficient updates (not used in current implementation)
-        # self.sparse_builder = ti.sparse_matrix_builder(pre_neurons, post_neurons, max_num_elements=int(pre_neurons * post_neurons * (1 - sparsity)))
         
         # Initialize parameters
         self._init_parameters()
@@ -133,7 +133,7 @@ class STDPSparseKernel:
                     self.weights[i, j] = self.w_max[None]
     
     @ti.kernel
-    def compute_postsynaptic_current(self, pre_spikes: ti.types.ndarray()) -> ti.types.ndarray():
+    def compute_postsynaptic_current(self, pre_spikes: ti.types.ndarray(ndim=1, dtype=ti.i32)) -> ti.types.ndarray(ndim=1, dtype=ti.f32):
         """
         Compute postsynaptic current from presynaptic spikes and weights.
         
@@ -156,6 +156,68 @@ class STDPSparseKernel:
         
         return postsynaptic_current
     
+    @ti.kernel
+    def step_kernel(self, pre_spikes: ti.types.ndarray(ndim=1, dtype=ti.i32), 
+                   post_spikes: ti.types.ndarray(ndim=1, dtype=ti.i32)) -> ti.types.ndarray(ndim=1, dtype=ti.f32):
+        """
+        Perform one STDP update step in kernel.
+        
+        Args:
+            pre_spikes: Presynaptic spike array
+            post_spikes: Postsynaptic spike array
+            
+        Returns:
+            Postsynaptic current array
+        """
+        # Update spike fields
+        for i in range(self.pre_neurons):
+            self.pre_spikes[i] = pre_spikes[i]
+        for j in range(self.post_neurons):
+            self.post_spikes[j] = post_spikes[j]
+        
+        # Update traces
+        for i in range(self.pre_neurons):
+            self.apre[i] *= ti.exp(-self.dt / self.tau_pre[None])
+            if self.pre_spikes[i] == 1:
+                self.apre[i] += 1.0
+        
+        for j in range(self.post_neurons):
+            self.apost[j] *= ti.exp(-self.dt / self.tau_post[None])
+            if self.post_spikes[j] == 1:
+                self.apost[j] += 1.0
+        
+        # Update weights
+        for i, j in ti.ndrange(self.pre_neurons, self.post_neurons):
+            if self.weights[i, j] > 0:  # Only update existing connections
+                # Pre-before-post (LTP)
+                if self.pre_spikes[i] == 1 and self.apost[j] > 0:
+                    dw = self.a_plus[None] * self.apost[j]
+                    self.weights[i, j] += dw
+                
+                # Post-before-pre (LTD) - modulated by dopamine
+                if self.post_spikes[j] == 1 and self.apre[i] > 0:
+                    # Dopamine reduces LTD (higher dopamine = less depression)
+                    effective_a_minus = self.a_minus[None] * (2.0 - self.dopamine[None])
+                    dw = effective_a_minus * self.apre[i]
+                    self.weights[i, j] += dw
+                
+                # Enforce weight bounds
+                if self.weights[i, j] < 0:
+                    self.weights[i, j] = 0
+                elif self.weights[i, j] > self.w_max[None]:
+                    self.weights[i, j] = self.w_max[None]
+        
+        # Compute postsynaptic current
+        postsynaptic_current = ti.field(dtype=ti.f32, shape=self.post_neurons)
+        for j in range(self.post_neurons):
+            postsynaptic_current[j] = 0.0
+        
+        for i, j in ti.ndrange(self.pre_neurons, self.post_neurons):
+            if self.weights[i, j] > 0 and pre_spikes[i] == 1:
+                postsynaptic_current[j] += self.weights[i, j]
+        
+        return postsynaptic_current
+    
     def step(self, pre_spikes: np.ndarray, post_spikes: np.ndarray) -> np.ndarray:
         """
         Perform one STDP update step.
@@ -167,9 +229,13 @@ class STDPSparseKernel:
         Returns:
             Postsynaptic current array
         """
+        # Convert to proper dtype
+        pre_spikes_typed = pre_spikes.astype(np.int32)
+        post_spikes_typed = post_spikes.astype(np.int32)
+        
         # Update spike fields
-        self.pre_spikes.from_numpy(pre_spikes.astype(np.int32))
-        self.post_spikes.from_numpy(post_spikes.astype(np.int32))
+        self.pre_spikes.from_numpy(pre_spikes_typed)
+        self.post_spikes.from_numpy(post_spikes_typed)
         
         # Update traces
         self.update_traces()
@@ -178,7 +244,7 @@ class STDPSparseKernel:
         self.update_weights()
         
         # Compute postsynaptic current
-        postsynaptic_current = self.compute_postsynaptic_current(pre_spikes)
+        postsynaptic_current = self.compute_postsynaptic_current(pre_spikes_typed)
         
         return postsynaptic_current.to_numpy()
     
