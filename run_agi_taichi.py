@@ -7,6 +7,7 @@ FPS: 55.7 → 18ms gerçek zaman
 ## Modified: 2025-11-08
 
 import taichi as ti
+# DEĞİŞİKLİK: Taichi başlatma en üste taşındı.
 ti.init(arch=ti.cuda, device_memory_GB=15, debug=False, log_level='error')
 
 import threading
@@ -39,14 +40,13 @@ def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
     logger.info(f"Sensory thread başlatılıyor (video: {enable_video}, audio: {enable_audio})")
     encoder = RealtimeEncoder(enable_video=enable_video, enable_audio=enable_audio)
     
-    # DEĞİŞİKLİK: Sensory encoder'ı başlat
     if not encoder.initialize():
         logger.error("Sensory encoder başlatılamadı. Thread durduruluyor.")
         return
 
     while shared.running:
         try:
-            rates = encoder.get_combined_rates()  # (12000,) numpy array
+            rates = encoder.get_combined_rates()
             shared.sensory_queue.put(rates, timeout=0.1)
         except queue.Full:
             continue
@@ -65,7 +65,6 @@ def dialogue_thread(shared: SharedState):
                 shared.running = False
                 break
 
-            # DEĞİŞİKLİK: Basit anahtar kelime tabanlı dopamin kontrolü
             reward = 0.0
             if "iyi" in text.lower() or "doğru" in text.lower() or "evet" in text.lower():
                 reward = 1.0
@@ -75,7 +74,6 @@ def dialogue_thread(shared: SharedState):
                 logger.info("Negatif geri bildirim alındı, dopamin azaltılıyor.")
 
             with shared.lock:
-                # Dopamin seviyesini 0 ile 2 arasında tut
                 shared.dopamine = np.clip(1.0 + reward * 0.5, 0.0, 2.0)
 
         except (EOFError, KeyboardInterrupt):
@@ -83,34 +81,20 @@ def dialogue_thread(shared: SharedState):
             break
     logger.info("Dialogue thread durduruldu.")
 
-
-def core_thread(shared: SharedState):
+# DEĞİŞİKLİK: core_thread artık önceden başlatılmış nesneleri parametre olarak alıyor.
+def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn: BionicSynapse, ttc: TextToConcepts, ctt: ConceptsToText):
     """Ana sinir ağı simülasyonunu Taichi üzerinde çalıştırır."""
-    # Taichi nöronlar ve sinapslar
-    input_neurons = 12000
-    l1_neurons = 10000
-    pre = BionicNeuron(input_neurons, dt=0.001, sparsity=0.9)
-    post = BionicNeuron(l1_neurons, dt=0.001, sparsity=0.9)
-    syn = BionicSynapse(pre, post, sparsity=0.9)
-    
-    # Dil modülleri
-    ttc = TextToConcepts(vocab_size=100, concept_neurons=50) # Toplam 5000 nöron
-    ctt = ConceptsToText(ttc, curiosity_threshold=0.8, curiosity_duration=3.0)
-    
-    logger.info(f"Core thread: Taichi SNN aktif – {input_neurons + l1_neurons} nöron")
+    logger.info(f"Core thread: Taichi SNN aktif – {pre.num_neurons + post.num_neurons} nöron")
     
     step_count = 0
     last_report_time = time.time()
     
-    # DEĞİŞİKLİK: Nöron aktivitesini anlamlı kelimelere çeviren fonksiyon
     def _get_active_concepts_from_spikes(spikes: np.ndarray) -> dict:
         active_indices = np.where(spikes > 0)[0]
         if len(active_indices) == 0:
             return {}
         
         concept_counts = {}
-        # Bu kısım, 'post' nöronlarının ilk bölümünün dil konseptlerine ayrıldığını varsayar
-        # Örneğin, 10000 post nörondan ilk 5000'i dil için kullanılabilir.
         max_concept_neuron_idx = ttc.get_concept_neurons_count()
 
         for idx in active_indices:
@@ -120,7 +104,6 @@ def core_thread(shared: SharedState):
                     word = ttc.id_to_word[word_id]
                     concept_counts[word] = concept_counts.get(word, 0) + 1
         
-        # Aktivasyonları normalize et
         activations = {
             word: count / ttc.concept_neurons 
             for word, count in concept_counts.items()
@@ -128,15 +111,11 @@ def core_thread(shared: SharedState):
         return activations
 
     while shared.running:
-        # 10ms'lik bir simülasyon adımı (10 x 1ms Taichi adımı)
         for _ in range(10):
-            # Sensory input al
             try:
                 rates = shared.sensory_queue.get_nowait()
-                # Girdi nöronlarına Poisson spike uygula
                 pre.apply_poisson_input(rates)
             except queue.Empty:
-                # Kuyruk boşsa, sadece mevcut akımla devam et
                 pre.update()
 
             pre_spikes = pre.get_spikes()
@@ -145,19 +124,16 @@ def core_thread(shared: SharedState):
             psc = syn.update(pre_spikes, post_spikes)
             post.update(psc)
             
-            # Dopamin modülasyonunu uygula
             with shared.lock:
                 current_dopamine = shared.dopamine
             syn.set_dopamine(current_dopamine)
             
             step_count += 1
         
-        # AGI çıktısı üret (her 200ms'de bir)
         if step_count % 200 == 0:
             post_spikes = post.get_spikes()
             concept_activations = _get_active_concepts_from_spikes(post_spikes)
             
-            # Basit bir hata sinyali (çok yüksek aktivite = yüksek hata/şaşkınlık)
             total_activity = np.sum(post_spikes) / post.num_neurons
             error_signal = np.clip(total_activity * 5.0, 0.0, 1.0)
 
@@ -166,14 +142,12 @@ def core_thread(shared: SharedState):
                 if response:
                     shared.agi_output_queue.put(response)
         
-        # AGI yanıtlarını yazdır
         try:
             agi_response = shared.agi_output_queue.get_nowait()
             print(f"AGI: {agi_response}")
         except queue.Empty:
             pass
 
-        # Performans raporu
         current_time = time.time()
         if current_time - last_report_time > 5.0:
             elapsed = current_time - last_report_time
@@ -190,24 +164,37 @@ def main():
     
     shared = SharedState()
     
+    # DEĞİŞİKLİK: Tüm Taichi ve dil nesneleri burada, ana thread'de oluşturuluyor.
+    logger.info("Taichi ve dil modülleri ana thread'de başlatılıyor...")
+    input_neurons = 12000
+    l1_neurons = 10000
+    pre = BionicNeuron(input_neurons, dt=0.001, sparsity=0.9)
+    post = BionicNeuron(l1_neurons, dt=0.001, sparsity=0.9)
+    syn = BionicSynapse(pre, post, sparsity=0.9)
+    ttc = TextToConcepts(vocab_size=100, concept_neurons=50)
+    ctt = ConceptsToText(ttc, curiosity_threshold=0.8, curiosity_duration=3.0)
+    logger.info("Başlatma tamamlandı.")
+
+    # DEĞİŞİKLİK: Oluşturulan nesneler core_thread'e argüman olarak veriliyor.
+    core_args = (shared, pre, post, syn, ttc, ctt)
+    
     threads = [
         threading.Thread(target=sensory_thread, name="Sensory", args=(shared, not args.no_camera, not args.no_audio)),
         threading.Thread(target=dialogue_thread, name="Dialogue", args=(shared,)),
-        threading.Thread(target=core_thread, name="Core", args=(shared,))
+        threading.Thread(target=core_thread, name="Core", args=core_args)
     ]
     
     for t in threads:
         t.start()
 
     try:
-        # Ana thread'in thread'ler bitene kadar beklemesini sağla
         for t in threads:
             t.join()
     except KeyboardInterrupt:
         print("\nKapanma sinyali alındı. Proto-AGI durduruluyor...")
         shared.running = False
         for t in threads:
-            t.join()
+            t.join(timeout=2.0)
 
     print("Proto-AGI başarıyla kapatıldı.")
 
