@@ -36,8 +36,13 @@ end = time.time()
 duration = end - start
 fps = 100 / duration
 
+# Get weight stats directly from kernel
+weights = syn.get_weights()
+non_zero_weights = weights[weights > 0]
+mean_weight = float(np.mean(non_zero_weights)) if len(non_zero_weights) > 0 else 0.0
+
 print(f"100 timestep sürdü: {duration:.4f} sn")
 print(f"FPS: {fps:.1f}")
 print(f"Spike rate (100 adım ort): {pre.spike_count / 100:.1f} Hz")
-print(f"Mean weight: {syn.get_weight_stats()['mean_weight']:.6f}")
+print(f"Mean weight: {mean_weight:.6f}")
 print(f"TAICHI T4 ÇALIŞIYOR! PROTO-AGI DOĞDU! T-43:30")
