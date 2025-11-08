@@ -33,12 +33,24 @@ class SharedState:
 def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
     encoder = RealtimeEncoder(enable_video=enable_video, enable_audio=enable_audio)
     print("Sensory thread: Kamera ve mikrofon aktif" if enable_video or enable_audio else "Sensory: Kapalı")
+    
+    # DÜZELTME: Sensory encoder'ı başlat
+    encoder.initialize()
+    
+    error_count = 0
     while shared.running:
         try:
             rates = encoder.get_combined_rates()  # (12000,) numpy array
             shared.sensory_queue.put(rates, timeout=0.01)
+            error_count = 0  # Reset error count on success
+        except queue.Full:
+            # Normal durum, queue dolu olabilir
+            pass
         except Exception as e:
-            print(f"Sensory hata: {e}")
+            error_count += 1
+            # Sadece ilk 10 hatayı göster, sonra sessiz ol
+            if error_count <= 10:
+                print(f"Sensory hata: {e}")
             time.sleep(0.01)
 
 def dialogue_thread(shared: SharedState):
