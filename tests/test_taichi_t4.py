@@ -6,7 +6,7 @@ from psinet.core.taichi_synapse import BionicSynapse
 import time
 import numpy as np
 
-print(f"Taichi CUDA backend: {ti.lang.impl.get_runtime().prog.compute_devices[0].name}")
+print(f"Taichi CUDA backend: {ti.lang.impl.get_runtime().prog.device_name()}")
 
 # 10k nöron test
 pre = BionicNeuron(10000, dt=0.001, sparsity=0.9)
