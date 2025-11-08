@@ -14,141 +14,202 @@ import queue
 import time
 import argparse
 import numpy as np
+import logging
 from psinet.core.taichi_neuron import BionicNeuron
 from psinet.core.taichi_synapse import BionicSynapse
 from psinet.io.realtime_encoders import RealtimeEncoder
 from psinet.language.input import TextToConcepts
 from psinet.language.output import ConceptsToText
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(threadName)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 print("PROTO-AGI TAICHI BAŞLATIYOR... T4 @ 55.7 FPS")
 
 class SharedState:
     def __init__(self):
         self.running = True
-        self.sensory_queue = queue.Queue(maxsize=5)
-        self.user_queue = queue.Queue(maxsize=5)
-        self.agi_queue = queue.Queue(maxsize=5)
+        self.sensory_queue = queue.Queue(maxsize=10)
+        self.agi_output_queue = queue.Queue(maxsize=10)
+        self.lock = threading.Lock()
         self.dopamine = 1.0
 
 def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
+    """Sensör verilerini (kamera/mikrofon veya simülasyon) işler ve ana kuyruğa yazar."""
+    logger.info(f"Sensory thread başlatılıyor (video: {enable_video}, audio: {enable_audio})")
     encoder = RealtimeEncoder(enable_video=enable_video, enable_audio=enable_audio)
-    print("Sensory thread: Kamera ve mikrofon aktif" if enable_video or enable_audio else "Sensory: Kapalı")
     
-    # DÜZELTME: Sensory encoder'ı başlat
-    encoder.initialize()
-    
-    error_count = 0
+    # DEĞİŞİKLİK: Sensory encoder'ı başlat
+    if not encoder.initialize():
+        logger.error("Sensory encoder başlatılamadı. Thread durduruluyor.")
+        return
+
     while shared.running:
         try:
             rates = encoder.get_combined_rates()  # (12000,) numpy array
-            shared.sensory_queue.put(rates, timeout=0.01)
-            error_count = 0  # Reset error count on success
+            shared.sensory_queue.put(rates, timeout=0.1)
         except queue.Full:
-            # Normal durum, queue dolu olabilir
-            pass
+            continue
         except Exception as e:
-            error_count += 1
-            # Sadece ilk 10 hatayı göster, sonra sessiz ol
-            if error_count <= 10:
-                print(f"Sensory hata: {e}")
-            time.sleep(0.01)
+            logger.error(f"Sensory hata: {e}")
+            time.sleep(1)
 
 def dialogue_thread(shared: SharedState):
-    ttc = TextToConcepts()
-    ctt = ConceptsToText(ttc)  # DÜZELTME: TextToConcepts parametresi gerekli
-    print("Dialogue thread: Hazırım, konuşmaya başla!")
+    """Kullanıcı girdisini alır ve dopamin seviyesini günceller."""
+    logger.info("Dialogue thread hazır. Konuşmaya başlayabilirsiniz.")
+    
     while shared.running:
         try:
-            user_text = shared.user_queue.get(timeout=0.1)
-            concepts = ttc.text_to_concepts(user_text)
-            reward = concepts.get("reward", 0.0)
-            shared.dopamine = 1.0 + reward * 0.5
-            print(f"Kullanıcı: {user_text} → Reward: {reward:.2f} → Dopamin: {shared.dopamine:.2f}")
-        except queue.Empty:
-            time.sleep(0.01)
+            text = input("> ")
+            if text.lower() in ["quit", "exit", "q"]:
+                shared.running = False
+                break
+
+            # DEĞİŞİKLİK: Basit anahtar kelime tabanlı dopamin kontrolü
+            reward = 0.0
+            if "iyi" in text.lower() or "doğru" in text.lower() or "evet" in text.lower():
+                reward = 1.0
+                logger.info("Pozitif geri bildirim alındı, dopamin artırılıyor.")
+            elif "kötü" in text.lower() or "yanlış" in text.lower() or "hayır" in text.lower():
+                reward = -1.0
+                logger.info("Negatif geri bildirim alındı, dopamin azaltılıyor.")
+
+            with shared.lock:
+                # Dopamin seviyesini 0 ile 2 arasında tut
+                shared.dopamine = np.clip(1.0 + reward * 0.5, 0.0, 2.0)
+
+        except (EOFError, KeyboardInterrupt):
+            shared.running = False
+            break
+    logger.info("Dialogue thread durduruldu.")
+
 
 def core_thread(shared: SharedState):
-    # Taichi nöronlar
-    pre = BionicNeuron(12000, dt=0.001, sparsity=0.9)
-    post = BionicNeuron(10000, dt=0.001, sparsity=0.9)
+    """Ana sinir ağı simülasyonunu Taichi üzerinde çalıştırır."""
+    # Taichi nöronlar ve sinapslar
+    input_neurons = 12000
+    l1_neurons = 10000
+    pre = BionicNeuron(input_neurons, dt=0.001, sparsity=0.9)
+    post = BionicNeuron(l1_neurons, dt=0.001, sparsity=0.9)
     syn = BionicSynapse(pre, post, sparsity=0.9)
     
-    ttc = TextToConcepts()
-    ctt = ConceptsToText(ttc)  # DÜZELTME: TextToConcepts parametresi gerekli
+    # Dil modülleri
+    ttc = TextToConcepts(vocab_size=100, concept_neurons=50) # Toplam 5000 nöron
+    ctt = ConceptsToText(ttc, curiosity_threshold=0.8, curiosity_duration=3.0)
     
-    print("Core thread: Taichi SNN aktif – 22k nöron, 55.7 FPS")
+    logger.info(f"Core thread: Taichi SNN aktif – {input_neurons + l1_neurons} nöron")
     
     step_count = 0
-    last_report = time.time()
+    last_report_time = time.time()
     
+    # DEĞİŞİKLİK: Nöron aktivitesini anlamlı kelimelere çeviren fonksiyon
+    def _get_active_concepts_from_spikes(spikes: np.ndarray) -> dict:
+        active_indices = np.where(spikes > 0)[0]
+        if len(active_indices) == 0:
+            return {}
+        
+        concept_counts = {}
+        # Bu kısım, 'post' nöronlarının ilk bölümünün dil konseptlerine ayrıldığını varsayar
+        # Örneğin, 10000 post nörondan ilk 5000'i dil için kullanılabilir.
+        max_concept_neuron_idx = ttc.get_concept_neurons_count()
+
+        for idx in active_indices:
+            if idx < max_concept_neuron_idx:
+                word_id = idx // ttc.concept_neurons
+                if word_id in ttc.id_to_word:
+                    word = ttc.id_to_word[word_id]
+                    concept_counts[word] = concept_counts.get(word, 0) + 1
+        
+        # Aktivasyonları normalize et
+        activations = {
+            word: count / ttc.concept_neurons 
+            for word, count in concept_counts.items()
+        }
+        return activations
+
     while shared.running:
-        # 10ms gerçek zaman = 10 Taichi adımı
+        # 10ms'lik bir simülasyon adımı (10 x 1ms Taichi adımı)
         for _ in range(10):
-            # Sensory input
+            # Sensory input al
             try:
                 rates = shared.sensory_queue.get_nowait()
-                pre.input_current = rates.astype(np.float32)
+                # Girdi nöronlarına Poisson spike uygula
+                pre.apply_poisson_input(rates)
             except queue.Empty:
-                pass
-            
-            pre.update()
+                # Kuyruk boşsa, sadece mevcut akımla devam et
+                pre.update()
+
             pre_spikes = pre.get_spikes()
             post_spikes = post.get_spikes()
+            
             psc = syn.update(pre_spikes, post_spikes)
             post.update(psc)
             
-            # Dopamin modülasyonu
-            syn.set_dopamine(shared.dopamine)
+            # Dopamin modülasyonunu uygula
+            with shared.lock:
+                current_dopamine = shared.dopamine
+            syn.set_dopamine(current_dopamine)
             
             step_count += 1
         
-        # AGI output (her 100ms)
-        if step_count % 100 == 0:
-            active = np.where(post.get_spikes() > 0)[0]
-            if len(active) > 50:
-                # DÜZELTME: spikes_to_text metodu yok, generate_response kullan
-                # Spike aktivasyonunu concept aktivasyonuna çevir
-                concept_activations = {f"neuron_{i}": 1.0 for i in active[:100]}
-                response = ctt.generate_response(concept_activations)
+        # AGI çıktısı üret (her 200ms'de bir)
+        if step_count % 200 == 0:
+            post_spikes = post.get_spikes()
+            concept_activations = _get_active_concepts_from_spikes(post_spikes)
+            
+            # Basit bir hata sinyali (çok yüksek aktivite = yüksek hata/şaşkınlık)
+            total_activity = np.sum(post_spikes) / post.num_neurons
+            error_signal = np.clip(total_activity * 5.0, 0.0, 1.0)
+
+            if concept_activations or error_signal > ctt.curiosity_threshold:
+                response = ctt.generate_response(concept_activations, error_signal, time.time())
                 if response:
-                    shared.agi_queue.put(response)
-                    print(f"AGI: {response}")
+                    shared.agi_output_queue.put(response)
         
-        # FPS
-        if time.time() - last_report > 5.0:
-            print(f"FPS: {step_count / (time.time() - last_report):.1f} | Dopamin: {shared.dopamine:.2f}")
-            last_report = time.time()
+        # AGI yanıtlarını yazdır
+        try:
+            agi_response = shared.agi_output_queue.get_nowait()
+            print(f"AGI: {agi_response}")
+        except queue.Empty:
+            pass
+
+        # Performans raporu
+        current_time = time.time()
+        if current_time - last_report_time > 5.0:
+            elapsed = current_time - last_report_time
+            fps = step_count / elapsed
+            logger.info(f"FPS: {fps:.1f} | Dopamin: {current_dopamine:.2f}")
+            last_report_time = current_time
             step_count = 0
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--no-camera', action='store_true')
-    parser.add_argument('--no-audio', action='store_true')
+    parser = argparse.ArgumentParser(description="Proto-AGI Taichi Edition")
+    parser.add_argument('--no-camera', action='store_true', help="Kamera girdisini devre dışı bırak")
+    parser.add_argument('--no-audio', action='store_true', help="Mikrofon girdisini devre dışı bırak")
     args = parser.parse_args()
     
     shared = SharedState()
     
-    # DÜZELTME: Taichi kernel'lar main thread'de, diğer thread'ler daemon
-    sensory_th = threading.Thread(target=sensory_thread, args=(shared, not args.no_camera, not args.no_audio), daemon=True)
-    dialogue_th = threading.Thread(target=dialogue_thread, args=(shared,), daemon=True)
+    threads = [
+        threading.Thread(target=sensory_thread, name="Sensory", args=(shared, not args.no_camera, not args.no_audio)),
+        threading.Thread(target=dialogue_thread, name="Dialogue", args=(shared,)),
+        threading.Thread(target=core_thread, name="Core", args=(shared,))
+    ]
     
-    sensory_th.start()
-    dialogue_th.start()
-    
-    print("PROTO-AGI CANLI! Konuşmak için terminale yaz:")
-    
-    # Core'u main thread yap
+    for t in threads:
+        t.start()
+
     try:
-        core_thread(shared)  # Main thread'de çalıştır
-        while shared.running:
-            text = input("> ")
-            if text.lower() in ["quit", "exit"]: 
-                shared.running = False
-                break
-            shared.user_queue.put(text)
+        # Ana thread'in thread'ler bitene kadar beklemesini sağla
+        for t in threads:
+            t.join()
     except KeyboardInterrupt:
+        print("\nKapanma sinyali alındı. Proto-AGI durduruluyor...")
         shared.running = False
-        print("\nProto-AGI kapanıyor...")
+        for t in threads:
+            t.join()
+
+    print("Proto-AGI başarıyla kapatıldı.")
 
 if __name__ == "__main__":
     main()
