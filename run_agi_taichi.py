@@ -37,12 +37,13 @@ def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
         try:
             rates = encoder.get_combined_rates()  # (12000,) numpy array
             shared.sensory_queue.put(rates, timeout=0.01)
-        except:
+        except Exception as e:
+            print(f"Sensory hata: {e}")
             time.sleep(0.01)
 
 def dialogue_thread(shared: SharedState):
     ttc = TextToConcepts()
-    ctt = ConceptsToText()
+    ctt = ConceptsToText(ttc)  # DÜZELTME: text_to_concepts arg eklendi
     print("Dialogue thread: Hazırım, konuşmaya başla!")
     while shared.running:
         try:
@@ -60,7 +61,7 @@ def core_thread(shared: SharedState):
     post = BionicNeuron(10000, dt=0.001, sparsity=0.9)
     syn = BionicSynapse(pre, post, sparsity=0.9)
     
-    ctt = ConceptsToText()
+    ctt = ConceptsToText(TextToConcepts())  # DÜZELTME: Bağımsız TextToConcepts
     
     print("Core thread: Taichi SNN aktif – 22k nöron, 55.7 FPS")
     
@@ -98,7 +99,7 @@ def core_thread(shared: SharedState):
         
         # FPS
         if time.time() - last_report > 5.0:
-            print(f"FPS: {step_count / (time.time() - last_report * 0.2):.1f} | Dopamin: {shared.dopamine:.2f}")
+            print(f"FPS: {step_count / (time.time() - last_report):.1f} | Dopamin: {shared.dopamine:.2f}")  # DÜZELTME: *0.2 silindi
             last_report = time.time()
             step_count = 0
 
@@ -110,23 +111,25 @@ def main():
     
     shared = SharedState()
     
-    threads = [
-        threading.Thread(target=sensory_thread, args=(shared, not args.no_camera, not args.no_audio), daemon=True),
-        threading.Thread(target=core_thread, args=(shared,), daemon=True),
-        threading.Thread(target=dialogue_thread, args=(shared,), daemon=True),
-    ]
+    # DÜZELTME: Taichi kernel'lar main thread'de, diğer thread'ler daemon
+    sensory_th = threading.Thread(target=sensory_thread, args=(shared, not args.no_camera, not args.no_audio), daemon=True)
+    dialogue_th = threading.Thread(target=dialogue_thread, args=(shared,), daemon=True)
     
-    for t in threads: t.start()
+    sensory_th.start()
+    dialogue_th.start()
     
     print("PROTO-AGI CANLI! Konuşmak için terminale yaz:")
+    
+    # Core'u main thread yap
     try:
+        core_thread(shared)  # Main thread'de çalıştır
         while shared.running:
             text = input("> ")
-            if text.lower() in ["quit", "exit"]: break
+            if text.lower() in ["quit", "exit"]: 
+                shared.running = False
+                break
             shared.user_queue.put(text)
     except KeyboardInterrupt:
-        pass
-    finally:
         shared.running = False
         print("\nProto-AGI kapanıyor...")
 
