@@ -1,0 +1,105 @@
+## Developer: inkbytefo
+## Modified: 2025-11-08
+
+# Project Chimera - Milestone 10: The Language Engine
+# Real-time sensory input with language processing and Association Cortex
+run_id: language_enabled_realtime_v1
+
+simulation_params:
+  brian2_device: runtime
+  # Realtime simulation parameters
+  chunk_duration_ms: 10        # Duration of each processing chunk in milliseconds
+  max_duration_seconds: 60     # Total simulation duration in seconds
+
+input_params:
+  source: realtime  # Use realtime sensory inputs instead of MNIST
+  
+  # Realtime encoder configuration
+  realtime_config:
+    # Enable/disable sensory modalities
+    enable_video: true
+    enable_audio: true
+    
+    # Weighting for combined sensory input
+    video_weight: 0.7
+    audio_weight: 0.3
+    
+    # Video encoder settings
+    video:
+      camera_id: 0                    # Camera device ID (0 = default camera)
+      target_size: [28, 28]           # Resize frames to 28x28 (MNIST compatible)
+      change_threshold: 30            # Threshold for detecting significant changes
+      max_rate: 150.0                 # Maximum firing rate in Hz for changes
+    
+    # Audio encoder settings
+    audio:
+      sample_rate: 44100              # Audio sampling rate in Hz
+      chunk_size: 1024                # Number of samples per audio chunk
+      freq_bins: 28                   # Number of frequency bins for analysis
+      max_rate: 150.0                 # Maximum firing rate in Hz
+
+# Language processing parameters
+language_params:
+  enable_language: true              # Enable language processing modules
+  
+  # Text-to-concepts configuration
+  vocab_size: 100                    # Maximum vocabulary size
+  concept_neurons: 50                # Number of neurons per concept representation
+  
+  # Concepts-to-text configuration
+  curiosity_threshold: 0.7           # Error threshold for triggering curiosity
+  curiosity_duration: 2.0            # Seconds error must persist for curiosity
+
+network_params:
+  layers:
+    - name: L1
+      num_excitatory: 100
+      num_inhibitory: 25
+      enable_lateral_inhibition: true
+      lateral_strength: 0.2
+    - name: L2
+      num_excitatory: 50
+      num_inhibitory: 12
+      enable_lateral_inhibition: true
+      lateral_strength: 0.3
+    - name: L3
+      num_excitatory: 75
+      num_inhibitory: 20
+      enable_lateral_inhibition: true
+      lateral_strength: 0.4
+
+# STDP parameters for connections
+connections_params:
+  inp_l1:
+    w_max: 0.3
+    a_plus: 0.01
+    a_minus: -0.01
+    tau_plus_ms: 20.0
+    tau_minus_ms: 20.0
+    initial_weight_max: 0.1
+  l1_l2:
+    w_max: 0.8
+    a_plus: 0.01
+    a_minus: -0.01
+    tau_plus_ms: 20.0
+    tau_minus_ms: 20.0
+    initial_weight_max: 0.2
+  l2_l3:
+    w_max: 1.0
+    a_plus: 0.01
+    a_minus: -0.01
+    tau_plus_ms: 25.0
+    tau_minus_ms: 25.0
+    initial_weight_max: 0.3
+
+monitor_params:
+  record_l1_spikes: true
+  record_l2_spikes: true
+  record_l3_spikes: true
+  record_input_spikes: false
+  record_weight_subset_size: 100
+
+output_params:
+  base_output_dir: outputs
+  save_plots: true
+  save_raw_data: true
