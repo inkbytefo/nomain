@@ -10,7 +10,7 @@ import time
 import numpy as np
 
 # T4 kontrolü
-print(f"Taichi CUDA backend: {ti.arch} → Tesla T4 AKTİF!")
+print(f"Taichi CUDA backend: {ti.lang.impl.current_cfg().arch} → Tesla T4 AKTİF!")
 
 # 10k nöron test
 pre = BionicNeuron(10000, dt=0.001, sparsity=0.9)
