@@ -9,6 +9,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from psinet.io.encoders import image_to_poisson_rates, create_input_layer
+from psinet.io.loaders import load_mnist
 from psinet.network.hierarchy import SimpleHierarchy
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -76,9 +77,7 @@ class Simulator:
 
         if dataset == 'mnist':
             try:
-                import mnist
-                images = mnist.train_images()  # shape: (60000, 28, 28)
-                labels = mnist.train_labels()
+                images, labels = load_mnist(inp_p.get('data_dir', '~/.psinet_data'))
                 digits = inp_p.get('patterns_to_learn', [0, 1])
                 indices = inp_p.get('image_indices', [0, 1])
                 max_rate = inp_p.get('max_rate_hz', 150)
@@ -95,7 +94,7 @@ class Simulator:
                 rates0 = image_to_poisson_rates(img0, max_rate=max_rate*b2.Hz, invert=False)
                 rates1 = image_to_poisson_rates(img1, max_rate=max_rate*b2.Hz, invert=False)
             except Exception as e:
-                logging.warning(f"MNIST yüklenemedi (hata: {e}). Sentetik 0/1 ile devam ediliyor.")
+                logging.warning(f"MNIST yüklenemedi (hata: {e}). Sentetik 0/1 ile devam ediliyor. Hata: {e}")
                 max_rate = inp_p.get('max_rate_hz', 150)
                 img0 = create_digit_zero()
                 img1 = create_digit_one()
@@ -120,7 +119,7 @@ class Simulator:
             num_inhibitory=net_p.get('num_inhibitory_l1', 25),
             enable_learning=True,
             enable_lateral_inhibition=net_p.get('enable_lateral_inhibition', True),
-            lateral_strength=0.2
+            lateral_strength=net_p.get('lateral_strength', 0.2)
         )
         # Adjust learning parameters on the created synapse
         syn = hierarchy.input_to_l1_synapse.synapses

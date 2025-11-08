@@ -1,0 +1,35 @@
+run_id: mnist_0_vs_1_perf
+
+simulation_params:
+  brian2_device: cpp_standalone
+  duration_per_pattern_ms: 1000
+  silence_period_ms: 100
+  cycles: 10
+
+input_params:
+  dataset: mnist
+  data_dir: ~/.psinet_data
+  patterns_to_learn: [0, 1]
+  image_indices: [1, 2]
+  max_rate_hz: 200
+
+network_params:
+  num_excitatory_l1: 100
+  num_inhibitory_l1: 25
+  enable_lateral_inhibition: true
+  lateral_strength: 0.2
+
+learning_params:
+  w_max_inp_l1: 0.3
+  a_plus_inp_l1: 0.01
+  a_minus_inp_l1: -0.01
+
+monitor_params:
+  record_l1_spikes: true
+  record_input_spikes: false
+  record_weight_subset_size: 100
+
+output_params:
+  base_output_dir: outputs
+  save_plots: true
+  save_raw_data: true

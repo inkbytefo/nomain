@@ -3,3 +3,5 @@ matplotlib==3.10.7
 numpy==2.3.4
 mnist==0.2.2
 PyYAML==6.0.3
+torch
+torchvision

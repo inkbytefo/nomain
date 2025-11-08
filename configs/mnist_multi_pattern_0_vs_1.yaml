@@ -17,6 +17,7 @@ network_params:
   num_excitatory_l1: 100
   num_inhibitory_l1: 25
   enable_lateral_inhibition: true
+  lateral_strength: 0.2
 
 learning_params:
   # Input -> L1 Excitatory Synapse Parameters
