@@ -2,11 +2,24 @@
 ## Modified: 2025-11-08
 
 import numpy as np
-import cv2
-import sounddevice as sd
 import logging
 from typing import Optional, Tuple
 from brian2 import Hz
+
+# Optional imports for sensory processing
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+    cv2 = None
+
+try:
+    import sounddevice as sd
+    SD_AVAILABLE = True
+except (ImportError, OSError):
+    SD_AVAILABLE = False
+    sd = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,6 +52,10 @@ class VideoToSpikes:
         
     def initialize(self) -> bool:
         """Initialize camera capture."""
+        if not CV2_AVAILABLE:
+            logger.warning("OpenCV not available - video encoder disabled")
+            return False
+            
         try:
             self.cap = cv2.VideoCapture(self.camera_id)
             if not self.cap.isOpened():
@@ -141,6 +158,10 @@ class AudioToSpikes:
         
     def initialize(self) -> bool:
         """Initialize audio stream."""
+        if not SD_AVAILABLE:
+            logger.warning("SoundDevice not available - audio encoder disabled")
+            return False
+            
         try:
             # Test audio device availability
             sd.check_input_settings(device=None, channels=1, dtype='float32',
@@ -247,21 +268,35 @@ class RealtimeEncoder:
     Unified interface for real-time sensory encoding.
     """
     
-    def __init__(self, config: dict):
+    def __init__(self, enable_video=True, enable_audio=True, config=None):
         """
         Initialize realtime encoder with configuration.
         
         Args:
-            config: Configuration dictionary with encoder parameters
+            enable_video: Enable video encoder (default: True)
+            enable_audio: Enable audio encoder (default: True)
+            config: Optional configuration dictionary (for backward compatibility)
         """
-        self.config = config
+        # Support both old config-based and new parameter-based initialization
+        if config is not None:
+            self.config = config
+            enable_video = config.get('enable_video', True)
+            enable_audio = config.get('enable_audio', True)
+        else:
+            self.config = {
+                'enable_video': enable_video,
+                'enable_audio': enable_audio,
+                'video_weight': 0.7,
+                'audio_weight': 0.3
+            }
+            
         self.video_encoder = None
         self.audio_encoder = None
         self.is_initialized = False
         
         # Initialize video encoder if enabled
-        if config.get('enable_video', True):
-            video_config = config.get('video', {})
+        if enable_video and CV2_AVAILABLE:
+            video_config = self.config.get('video', {}) if config else {}
             self.video_encoder = VideoToSpikes(
                 camera_id=video_config.get('camera_id', 0),
                 target_size=tuple(video_config.get('target_size', [28, 28])),
@@ -270,8 +305,8 @@ class RealtimeEncoder:
             )
         
         # Initialize audio encoder if enabled
-        if config.get('enable_audio', True):
-            audio_config = config.get('audio', {})
+        if enable_audio and SD_AVAILABLE:
+            audio_config = self.config.get('audio', {}) if config else {}
             self.audio_encoder = AudioToSpikes(
                 sample_rate=audio_config.get('sample_rate', 44100),
                 chunk_size=audio_config.get('chunk_size', 1024),
@@ -346,6 +381,29 @@ class RealtimeEncoder:
         except Exception as e:
             logger.error(f"Error getting spike rates: {e}")
             return np.zeros(28 * 28)
+    
+    def get_combined_rates(self) -> np.ndarray:
+        """
+        Get combined spike rates from all enabled encoders.
+        This method returns a fixed-size array (12000,) for compatibility with AGI.
+        
+        Returns:
+            np.ndarray: Combined spike rates of shape (12000,)
+        """
+        rates = self.get_spike_rates()
+        
+        # Ensure we return exactly 12000 values as expected by the AGI system
+        target_size = 12000
+        if len(rates) == target_size:
+            return rates
+        elif len(rates) < target_size:
+            # Pad with zeros if too small
+            padded = np.zeros(target_size)
+            padded[:len(rates)] = rates
+            return padded
+        else:
+            # Truncate if too large
+            return rates[:target_size]
     
     def release(self):
         """Release all encoder resources."""
