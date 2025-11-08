@@ -45,35 +45,22 @@ class SharedState:
         self.lock = threading.Lock()
         self.dopamine = 1.0
 
-def core_thread(shared: SharedState):
+def core_thread(shared: SharedState, sensory_neurons, association_neurons, motor_neurons, language_neurons,
+                syn_sensory_to_assoc, syn_assoc_to_motor, syn_motor_to_assoc, syn_lang_to_assoc,
+                motor_spikes_field):
     logger.info("Core thread: SNN Dil Motoru v2.0 aktif ediliyor...")
     
-    # --- FAZ 2: SNN ENTEGRASYONU ---
-    # Nöron Katmanları
-    sensory_neurons = BionicNeuron(SENSORY_NEURONS_COUNT, dt=0.001)
-    association_neurons = BionicNeuron(ASSOCIATION_NEURONS_COUNT, dt=0.001)
-    motor_neurons = BionicNeuron(MOTOR_NEURONS_COUNT, dt=0.001)
-    language_neurons = BionicNeuron(LANGUAGE_NEURONS_COUNT, dt=0.001)
-
-    # Sinapslar
-    syn_sensory_to_assoc = BionicSynapse(sensory_neurons, association_neurons)
-    syn_assoc_to_motor = BionicSynapse(association_neurons, motor_neurons)
-    syn_motor_to_assoc = BionicSynapse(motor_neurons, association_neurons, a_post=-0.015)
-    syn_lang_to_assoc = BionicSynapse(language_neurons, association_neurons)
-
-    # Decoder Kernel için Taichi alanları
-    motor_spikes_field = ti.field(ti.f32, shape=MOTOR_NEURONS_COUNT)
     last_spoken_tokens = -np.ones(10, dtype=np.int32)
     
     @ti.kernel
-    def decode_and_speak(dopamine_level: ti.f32):
+    def decode_and_speak(dopamine_level: ti.f32, last_spoken_tokens_arr: ti.types.ndarray()) -> ti.i32:
         # En çok ateşlenen motor nöronunu bul (bu nöronun indeksi = token ID)
         best_token_id = -1
         max_spikes = 0.0
         for i in range(MOTOR_NEURONS_COUNT):
             is_recent = False
-            for k in ti.static(range(last_spoken_tokens.shape[0])):
-                if i == last_spoken_tokens[k]:
+            for k in ti.static(range(10)):  # last_spoken_tokens.shape[0] = 10
+                if i == last_spoken_tokens_arr[k]:
                     is_recent = True
             
             # Dopamin, konuşma isteğini artırır
@@ -82,8 +69,7 @@ def core_thread(shared: SharedState):
                 max_spikes = current_spikes
                 best_token_id = i
         
-        if max_spikes > 0.8: # Ateşleme eşiği
-            shared.spoken_tokens_queue.put(best_token_id)
+        return best_token_id if max_spikes > 0.8 else -1  # Ateşleme eşiği
 
     while shared.running:
         # Girdileri işle (Dil ve Sensör)
@@ -121,14 +107,12 @@ def core_thread(shared: SharedState):
         with shared.lock:
             current_dopamine = shared.dopamine
         
-        decode_and_speak(current_dopamine)
-
-        try:
-            spoken_id = shared.spoken_tokens_queue.get_nowait()
+        # Token üretimi
+        spoken_id = decode_and_speak(current_dopamine, last_spoken_tokens)
+        if spoken_id != -1:
+            shared.spoken_tokens_queue.put(int(spoken_id))
             np.roll(last_spoken_tokens, 1)
-            last_spoken_tokens[0] = spoken_id
-        except queue.Empty:
-            pass
+            last_spoken_tokens[0] = int(spoken_id)
 
 def sensory_thread(shared: SharedState):
     logger.info("Sensory thread başlatılıyor (simülasyon modu)")
@@ -143,9 +127,27 @@ def sensory_thread(shared: SharedState):
 def main():
     shared = SharedState()
     
+    # --- FAZ 2: SNN ENTEGRASYONU (Main thread'de başlatılıyor) ---
+    # Nöron Katmanları
+    sensory_neurons = BionicNeuron(SENSORY_NEURONS_COUNT, dt=0.001)
+    association_neurons = BionicNeuron(ASSOCIATION_NEURONS_COUNT, dt=0.001)
+    motor_neurons = BionicNeuron(MOTOR_NEURONS_COUNT, dt=0.001)
+    language_neurons = BionicNeuron(LANGUAGE_NEURONS_COUNT, dt=0.001)
+
+    # Sinapslar
+    syn_sensory_to_assoc = BionicSynapse(sensory_neurons, association_neurons)
+    syn_assoc_to_motor = BionicSynapse(association_neurons, motor_neurons)
+    syn_motor_to_assoc = BionicSynapse(motor_neurons, association_neurons, a_post=-0.015)
+    syn_lang_to_assoc = BionicSynapse(language_neurons, association_neurons)
+
+    # Decoder Kernel için Taichi alanları
+    motor_spikes_field = ti.field(ti.f32, shape=MOTOR_NEURONS_COUNT)
+    
     threads = [
         threading.Thread(target=sensory_thread, name="Sensory", args=(shared,)),
-        threading.Thread(target=core_thread, name="Core", args=(shared,))
+        threading.Thread(target=core_thread, name="Core", args=(shared, sensory_neurons, association_neurons, motor_neurons, language_neurons,
+                                                              syn_sensory_to_assoc, syn_assoc_to_motor, syn_motor_to_assoc, syn_lang_to_assoc,
+                                                              motor_spikes_field))
     ]
     
     for t in threads:
