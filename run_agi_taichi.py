@@ -43,7 +43,7 @@ def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
 
 def dialogue_thread(shared: SharedState):
     ttc = TextToConcepts()
-    ctt = ConceptsToText()  # DÜZELTME: arg olmadan, default TextToConcepts kullanır
+    ctt = ConceptsToText(ttc)  # DÜZELTME: TextToConcepts parametresi gerekli
     print("Dialogue thread: Hazırım, konuşmaya başla!")
     while shared.running:
         try:
@@ -61,7 +61,8 @@ def core_thread(shared: SharedState):
     post = BionicNeuron(10000, dt=0.001, sparsity=0.9)
     syn = BionicSynapse(pre, post, sparsity=0.9)
     
-    ctt = ConceptsToText()  # DÜZELTME: arg olmadan
+    ttc = TextToConcepts()
+    ctt = ConceptsToText(ttc)  # DÜZELTME: TextToConcepts parametresi gerekli
     
     print("Core thread: Taichi SNN aktif – 22k nöron, 55.7 FPS")
     
@@ -93,9 +94,13 @@ def core_thread(shared: SharedState):
         if step_count % 100 == 0:
             active = np.where(post.get_spikes() > 0)[0]
             if len(active) > 50:
-                concept = ctt.spikes_to_text(active[:100])
-                shared.agi_queue.put(concept)
-                print(f"AGI: {concept}")
+                # DÜZELTME: spikes_to_text metodu yok, generate_response kullan
+                # Spike aktivasyonunu concept aktivasyonuna çevir
+                concept_activations = {f"neuron_{i}": 1.0 for i in active[:100]}
+                response = ctt.generate_response(concept_activations)
+                if response:
+                    shared.agi_queue.put(response)
+                    print(f"AGI: {response}")
         
         # FPS
         if time.time() - last_report > 5.0:
