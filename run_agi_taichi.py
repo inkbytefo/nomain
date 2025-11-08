@@ -47,29 +47,10 @@ class SharedState:
 
 def core_thread(shared: SharedState, sensory_neurons, association_neurons, motor_neurons, language_neurons,
                 syn_sensory_to_assoc, syn_assoc_to_motor, syn_motor_to_assoc, syn_lang_to_assoc,
-                motor_spikes_field):
+                motor_spikes_field, decode_and_speak_kernel):
     logger.info("Core thread: SNN Dil Motoru v2.0 aktif ediliyor...")
     
     last_spoken_tokens = -np.ones(10, dtype=np.int32)
-    
-    @ti.kernel
-    def decode_and_speak(dopamine_level: ti.f32, last_spoken_tokens_arr: ti.types.ndarray()) -> ti.i32:
-        # En çok ateşlenen motor nöronunu bul (bu nöronun indeksi = token ID)
-        best_token_id = -1
-        max_spikes = 0.0
-        for i in range(MOTOR_NEURONS_COUNT):
-            is_recent = False
-            for k in ti.static(range(10)):  # last_spoken_tokens.shape[0] = 10
-                if i == last_spoken_tokens_arr[k]:
-                    is_recent = True
-            
-            # Dopamin, konuşma isteğini artırır
-            current_spikes = motor_spikes_field[i] * dopamine_level
-            if not is_recent and current_spikes > max_spikes:
-                max_spikes = current_spikes
-                best_token_id = i
-        
-        return best_token_id if max_spikes > 0.8 else -1  # Ateşleme eşiği
 
     while shared.running:
         # Girdileri işle (Dil ve Sensör)
@@ -108,7 +89,7 @@ def core_thread(shared: SharedState, sensory_neurons, association_neurons, motor
             current_dopamine = shared.dopamine
         
         # Token üretimi
-        spoken_id = decode_and_speak(current_dopamine, last_spoken_tokens)
+        spoken_id = decode_and_speak_kernel(current_dopamine, last_spoken_tokens)
         if spoken_id != -1:
             shared.spoken_tokens_queue.put(int(spoken_id))
             np.roll(last_spoken_tokens, 1)
@@ -143,11 +124,61 @@ def main():
     # Decoder Kernel için Taichi alanları
     motor_spikes_field = ti.field(ti.f32, shape=MOTOR_NEURONS_COUNT)
     
+    # --- KRİTİK: Tüm Taichi kernel'lerini main thread'de pre-compile et ---
+    logger.info("Taichi kernel'leri pre-compile ediliyor...")
+    
+    # Dummy input arrays for pre-compilation
+    dummy_sensory_input = np.zeros(SENSORY_NEURONS_COUNT, dtype=np.float32)
+    dummy_lang_input = np.zeros(LANGUAGE_NEURONS_COUNT, dtype=np.float32)
+    dummy_assoc_input = np.zeros(ASSOCIATION_NEURONS_COUNT, dtype=np.float32)
+    dummy_motor_input = np.zeros(MOTOR_NEURONS_COUNT, dtype=np.float32)
+    
+    # Pre-compile all neuron kernels
+    sensory_neurons.update(dummy_sensory_input)
+    association_neurons.update(dummy_assoc_input)
+    motor_neurons.update(dummy_motor_input)
+    language_neurons.update(dummy_lang_input)
+    
+    # Pre-compile synapse kernels
+    dummy_spikes = np.zeros(SENSORY_NEURONS_COUNT, dtype=np.float32)
+    syn_sensory_to_assoc.update(dummy_spikes, dummy_spikes)
+    syn_assoc_to_motor.update(dummy_spikes, dummy_spikes)
+    syn_motor_to_assoc.update(dummy_spikes, dummy_spikes)
+    syn_lang_to_assoc.update(dummy_spikes, dummy_spikes)
+    
+    # Pre-compile decoder kernel
+    dummy_last_tokens = -np.ones(10, dtype=np.int32)
+    
+    @ti.kernel
+    def decode_and_speak(dopamine_level: ti.f32, last_spoken_tokens_arr: ti.types.ndarray()) -> ti.i32:
+        # En çok ateşlenen motor nöronunu bul (bu nöronun indeksi = token ID)
+        best_token_id = -1
+        max_spikes = 0.0
+        for i in range(MOTOR_NEURONS_COUNT):
+            is_recent = False
+            for k in ti.static(range(10)):  # last_spoken_tokens.shape[0] = 10
+                if i == last_spoken_tokens_arr[k]:
+                    is_recent = True
+            
+            # Dopamin, konuşma isteğini artırır
+            current_spikes = motor_spikes_field[i] * dopamine_level
+            if not is_recent and current_spikes > max_spikes:
+                max_spikes = current_spikes
+                best_token_id = i
+        
+        return best_token_id if max_spikes > 0.8 else -1  # Ateşleme eşiği
+    
+    # Pre-compile decoder kernel with dummy data
+    motor_spikes_field.from_numpy(dummy_motor_input)
+    decode_and_speak(1.0, dummy_last_tokens)
+    
+    logger.info("Tüm Taichi kernel'leri başarıyla pre-compile edildi.")
+    
     threads = [
         threading.Thread(target=sensory_thread, name="Sensory", args=(shared,)),
         threading.Thread(target=core_thread, name="Core", args=(shared, sensory_neurons, association_neurons, motor_neurons, language_neurons,
                                                               syn_sensory_to_assoc, syn_assoc_to_motor, syn_motor_to_assoc, syn_lang_to_assoc,
-                                                              motor_spikes_field))
+                                                              motor_spikes_field, decode_and_speak))
     ]
     
     for t in threads:

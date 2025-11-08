@@ -6,8 +6,6 @@ import numpy as np
 from typing import Optional
 from scipy.sparse import csr_matrix
 
-ti.init(arch=ti.cuda, device_memory_GB=15, debug=False, log_level='error')
-
 @ti.data_oriented
 class STDPSparseKernel:
     def __init__(self, pre_neurons: int, post_neurons: int, dt: float = 0.001, sparsity: float = 0.9):
