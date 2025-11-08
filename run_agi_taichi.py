@@ -31,7 +31,6 @@ class SharedState:
         self.running = True
         self.sensory_queue = queue.Queue(maxsize=10)
         self.agi_output_queue = queue.Queue(maxsize=10)
-        # DEĞİŞİKLİK: Kullanıcı girdisi için yeni kuyruk
         self.user_input_queue = queue.Queue(maxsize=5)
         self.lock = threading.Lock()
         self.dopamine = 1.0
@@ -54,43 +53,6 @@ def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
         except Exception as e:
             logger.error(f"Sensory hata: {e}")
             time.sleep(1)
-
-# DEĞİŞİKLİK: dialogue_thread artık ttc nesnesini alıyor ve spike verisi üretiyor
-def dialogue_thread(shared: SharedState, ttc: TextToConcepts):
-    """Kullanıcı girdisini alır, spike verisine çevirir ve dopamini günceller."""
-    logger.info("Dialogue thread hazır. Konuşmaya başlayabilirsiniz.")
-    
-    while shared.running:
-        try:
-            text = input("> ")
-            if text.lower() in ["quit", "exit", "q"]:
-                shared.running = False
-                break
-
-            # Adım 1: Metni spike verisine çevir ve kuyruğa koy
-            spike_data = ttc.text_to_spike_data(text, current_time=time.time())
-            if spike_data:
-                try:
-                    shared.user_input_queue.put(spike_data, timeout=0.1)
-                except queue.Full:
-                    logger.warning("Kullanıcı girdi kuyruğu dolu, girdi işlenemedi.")
-
-            # Adım 2: Dopamini ayarla
-            reward = 0.0
-            if "iyi" in text.lower() or "doğru" in text.lower() or "evet" in text.lower():
-                reward = 1.0
-                logger.info("Pozitif geri bildirim alındı, dopamin artırılıyor.")
-            elif "kötü" in text.lower() or "yanlış" in text.lower() or "hayır" in text.lower():
-                reward = -1.0
-                logger.info("Negatif geri bildirim alındı, dopamin azaltılıyor.")
-
-            with shared.lock:
-                shared.dopamine = np.clip(1.0 + reward * 0.5, 0.0, 2.0)
-
-        except (EOFError, KeyboardInterrupt):
-            shared.running = False
-            break
-    logger.info("Dialogue thread durduruldu.")
 
 def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn: BionicSynapse, ttc: TextToConcepts, ctt: ConceptsToText):
     """Ana sinir ağı simülasyonunu Taichi üzerinde çalıştırır."""
@@ -121,16 +83,17 @@ def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn:
         return activations
 
     while shared.running:
-        # DEĞİŞİKLİK: Kullanıcı girdisinden gelen spike'ları işlemek için akım vektörü
+        # Her 10ms'lik döngünün başında kullanıcı girdisini bir kez kontrol et
         language_current = np.zeros(post.num_neurons, dtype=np.float32)
         try:
             spike_indices, _ = shared.user_input_queue.get_nowait()
-            # Dil konseptleriyle ilişkili nöronlara güçlü bir akım darbesi uygula
-            language_current[spike_indices] = 5.0 
-            logger.debug(f"Dil girdisi enjekte ediliyor: {len(spike_indices)} spike.")
+            # DEĞİŞİKLİK: Daha düşük seviyeli, sürekli bir akım uygula
+            language_current[spike_indices] = 1.5 
+            logger.info(f"Dil girdisi alınıyor: {len(spike_indices)} spike enjekte edilecek.")
         except queue.Empty:
             pass
 
+        # 10ms'lik simülasyon adımı (10 x 1ms Taichi adımı)
         for _ in range(10):
             # Sensory input
             try:
@@ -144,13 +107,10 @@ def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn:
             
             psc = syn.update(pre_spikes, post_spikes)
             
-            # Post-sinaptik akıma dil girdisinden gelen akımı ekle
+            # DEĞİŞİKLİK: Dil akımını her adımda post-sinaptik akıma ekle
             psc += language_current
             
             post.update(psc)
-            
-            # Dil akımını bir sonraki adım için sıfırla (sadece bir anlık darbe)
-            language_current.fill(0)
             
             with shared.lock:
                 current_dopamine = shared.dopamine
@@ -158,6 +118,7 @@ def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn:
             
             step_count += 1
         
+        # AGI çıktısı üret (her 200ms'de bir)
         if step_count % 200 == 0:
             post_spikes = post.get_spikes()
             concept_activations = _get_active_concepts_from_spikes(post_spikes)
@@ -170,12 +131,14 @@ def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn:
                 if response:
                     shared.agi_output_queue.put(response)
         
+        # AGI yanıtlarını yazdır
         try:
             agi_response = shared.agi_output_queue.get_nowait()
             print(f"AGI: {agi_response}")
         except queue.Empty:
             pass
 
+        # Performans raporu
         current_time = time.time()
         if current_time - last_report_time > 5.0:
             elapsed = current_time - last_report_time
@@ -203,26 +166,49 @@ def main():
     logger.info("Başlatma tamamlandı.")
 
     core_args = (shared, pre, post, syn, ttc, ctt)
-    # DEĞİŞİKLİK: dialogue_thread'e ttc nesnesi veriliyor
-    dialogue_args = (shared, ttc)
     
     threads = [
         threading.Thread(target=sensory_thread, name="Sensory", args=(shared, not args.no_camera, not args.no_audio)),
-        threading.Thread(target=dialogue_thread, name="Dialogue", args=dialogue_args),
         threading.Thread(target=core_thread, name="Core", args=core_args)
     ]
     
     for t in threads:
         t.start()
 
-    try:
-        for t in threads:
-            t.join()
-    except KeyboardInterrupt:
-        print("\nKapanma sinyali alındı. Proto-AGI durduruluyor...")
-        shared.running = False
-        for t in threads:
-            t.join(timeout=2.0)
+    # DEĞİŞİKLİK: Ana thread artık kullanıcı girdisini yönetiyor.
+    logger.info("Dialogue arayüzü ana thread'de aktif. Konuşmaya başlayabilirsiniz.")
+    while shared.running:
+        try:
+            text = input("> ")
+            if text.lower() in ["quit", "exit", "q"]:
+                break
+
+            spike_data = ttc.text_to_spike_data(text, current_time=time.time())
+            if spike_data:
+                try:
+                    shared.user_input_queue.put(spike_data, timeout=0.1)
+                except queue.Full:
+                    logger.warning("Kullanıcı girdi kuyruğu dolu, girdi işlenemedi.")
+
+            reward = 0.0
+            if "iyi" in text.lower() or "doğru" in text.lower() or "evet" in text.lower():
+                reward = 1.0
+                logger.info("Pozitif geri bildirim alındı, dopamin artırılıyor.")
+            elif "kötü" in text.lower() or "yanlış" in text.lower() or "hayır" in text.lower():
+                reward = -1.0
+                logger.info("Negatif geri bildirim alındı, dopamin azaltılıyor.")
+
+            with shared.lock:
+                shared.dopamine = np.clip(1.0 + reward * 0.5, 0.0, 2.0)
+
+        except (EOFError, KeyboardInterrupt):
+            break # Döngüden çık ve programı kapat
+    
+    # Kapanma süreci
+    print("\nKapanma sinyali alındı. Proto-AGI durduruluyor...")
+    shared.running = False
+    for t in threads:
+        t.join(timeout=2.0)
 
     print("Proto-AGI başarıyla kapatıldı.")
 
