@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Proto-AGI Taichi Edition – T4'te gerçek zamanlı görme, işitme, konuşma, dopaminle öğrenme
-FPS: 55.7 → 18ms gerçek zaman
+Proto-AGI Taichi Edition – SNN Dil Motoru v2.0 (Tokenizer Entegrasyonu)
+Hugging Face tokenizer ile güçlendirilmiş, LLM'siz, SNN tabanlı konuşan AGI.
 """
 ## Developer: inkbytefo
 ## Modified: 2025-11-08
@@ -15,216 +15,191 @@ import time
 import argparse
 import numpy as np
 import logging
+from transformers import AutoTokenizer
 from psinet.core.taichi_neuron import BionicNeuron
 from psinet.core.taichi_synapse import BionicSynapse
 from psinet.io.realtime_encoders import RealtimeEncoder
-from psinet.language.input import TextToConcepts
-from psinet.language.output import ConceptsToText
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(threadName)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-print("PROTO-AGI TAICHI BAŞLATIYOR... T4 @ 55.7 FPS")
+# --- FAZ 1: TOKENIZER ALTYAPISI ---
+TOKENIZER_MODEL = "bert-base-turkish-cased"
+logger.info(f"Hugging Face tokenizer yükleniyor: {TOKENIZER_MODEL}")
+tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_MODEL)
+VOCAB_SIZE = tokenizer.vocab_size
+logger.info(f"Tokenizer başarıyla yüklendi. Kelime/Token sayısı: {VOCAB_SIZE}")
+
+# Sabitler
+MOTOR_NEURONS_COUNT = VOCAB_SIZE # Her token bir motor nörona karşılık gelir
+ASSOCIATION_NEURONS_COUNT = 8000
+SENSORY_NEURONS_COUNT = 12000
+LANGUAGE_NEURONS_COUNT = VOCAB_SIZE # Her token bir dil girdi nöronuna karşılık gelir
 
 class SharedState:
     def __init__(self):
         self.running = True
         self.sensory_queue = queue.Queue(maxsize=10)
-        self.agi_output_queue = queue.Queue(maxsize=10)
-        self.user_input_queue = queue.Queue(maxsize=5)
+        self.spoken_tokens_queue = queue.Queue(maxsize=50) # Artık token ID'leri taşıyor
+        self.self_talk_queue = queue.Queue(maxsize=50) # Geri besleme için token ID'leri
         self.lock = threading.Lock()
         self.dopamine = 1.0
 
-def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
-    logger.info(f"Sensory thread başlatılıyor (video: {enable_video}, audio: {enable_audio})")
-    encoder = RealtimeEncoder(enable_video=enable_video, enable_audio=enable_audio)
+def core_thread(shared: SharedState):
+    logger.info("Core thread: SNN Dil Motoru v2.0 aktif ediliyor...")
     
-    if not encoder.initialize():
-        logger.error("Sensory encoder başlatılamadı. Thread durduruluyor.")
-        return
+    # --- FAZ 2: SNN ENTEGRASYONU ---
+    # Nöron Katmanları
+    sensory_neurons = BionicNeuron(SENSORY_NEURONS_COUNT, dt=0.001)
+    association_neurons = BionicNeuron(ASSOCIATION_NEURONS_COUNT, dt=0.001)
+    motor_neurons = BionicNeuron(MOTOR_NEURONS_COUNT, dt=0.001)
+    language_neurons = BionicNeuron(LANGUAGE_NEURONS_COUNT, dt=0.001)
 
-    while shared.running:
-        try:
-            rates = encoder.get_combined_rates()
-            shared.sensory_queue.put(rates, timeout=0.1)
-        except queue.Full:
-            continue
-        except Exception as e:
-            logger.error(f"Sensory hata: {e}")
-            time.sleep(1)
+    # Sinapslar
+    syn_sensory_to_assoc = BionicSynapse(sensory_neurons, association_neurons)
+    syn_assoc_to_motor = BionicSynapse(association_neurons, motor_neurons)
+    syn_motor_to_assoc = BionicSynapse(motor_neurons, association_neurons, a_post=-0.015)
+    syn_lang_to_assoc = BionicSynapse(language_neurons, association_neurons)
 
-# DEĞİŞİKLİK: core_thread artık daha fazla nesne alıyor (yeni dil katmanı ve sinapsı)
-def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, language_neurons: BionicNeuron, 
-                syn_sensory_to_post: BionicSynapse, syn_lang_to_post: BionicSynapse, 
-                ttc: TextToConcepts, ctt: ConceptsToText):
-    logger.info(f"Core thread: Taichi SNN aktif – {pre.num_neurons + post.num_neurons + language_neurons.num_neurons} nöron")
+    # Decoder Kernel için Taichi alanları
+    motor_spikes_field = ti.field(ti.f32, shape=MOTOR_NEURONS_COUNT)
+    last_spoken_tokens = -np.ones(10, dtype=np.int32)
     
-    step_count = 0
-    last_report_time = time.time()
-    
-    def _get_active_concepts_from_spikes(spikes: np.ndarray) -> dict:
-        active_indices = np.where(spikes > 0)[0]
-        if len(active_indices) == 0:
-            return {}
-        
-        concept_counts = {}
-        # DEĞİŞİKLİK: Artık post nöronlarındaki aktiviteyi değil, dil nöronlarındaki aktiviteyi yorumluyoruz.
-        # Bu daha temiz bir sinyal sağlar.
-        max_concept_neuron_idx = ttc.get_concept_neurons_count()
-
-        for idx in active_indices:
-            if idx < max_concept_neuron_idx:
-                word_id = idx // ttc.concept_neurons
-                if word_id in ttc.id_to_word:
-                    word = ttc.id_to_word[word_id]
-                    concept_counts[word] = concept_counts.get(word, 0) + 1
-        
-        activations = {
-            word: count / ttc.concept_neurons 
-            for word, count in concept_counts.items()
-        }
-        return activations
-
-    while shared.running:
-        # Kullanıcı girdisini dil nöronlarına uygula
-        try:
-            spike_indices, _ = shared.user_input_queue.get_nowait()
-            # Dil nöronlarına Poisson girdisi uygula
-            lang_rates = np.zeros(language_neurons.num_neurons, dtype=np.float32)
-            lang_rates[spike_indices] = 150.0 # Hz cinsinden yüksek ateşleme oranı
-            language_neurons.apply_poisson_input(lang_rates)
-            logger.info(f"Dil girdisi alınıyor: {len(spike_indices)} spike konsepti aktive ediliyor.")
-        except queue.Empty:
-            language_neurons.update() # Girdi yoksa normal şekilde güncelle
-
-        # 10ms'lik simülasyon adımı
-        for _ in range(10):
-            # 1. Sensör ve dil katmanlarını güncelle
-            try:
-                rates = shared.sensory_queue.get_nowait()
-                pre.apply_poisson_input(rates)
-            except queue.Empty:
-                pre.update()
+    @ti.kernel
+    def decode_and_speak(dopamine_level: ti.f32):
+        # En çok ateşlenen motor nöronunu bul (bu nöronun indeksi = token ID)
+        best_token_id = -1
+        max_spikes = 0.0
+        for i in range(MOTOR_NEURONS_COUNT):
+            is_recent = False
+            for k in ti.static(range(last_spoken_tokens.shape[0])):
+                if i == last_spoken_tokens[k]:
+                    is_recent = True
             
+            # Dopamin, konuşma isteğini artırır
+            current_spikes = motor_spikes_field[i] * dopamine_level
+            if not is_recent and current_spikes > max_spikes:
+                max_spikes = current_spikes
+                best_token_id = i
+        
+        if max_spikes > 0.8: # Ateşleme eşiği
+            shared.spoken_tokens_queue.put(best_token_id)
+
+    while shared.running:
+        # Girdileri işle (Dil ve Sensör)
+        try:
+            token_ids = shared.self_talk_queue.get_nowait()
+            lang_rates = np.zeros(LANGUAGE_NEURONS_COUNT, dtype=np.float32)
+            lang_rates[token_ids] = 150.0
+            language_neurons.apply_poisson_input(lang_rates)
+        except queue.Empty:
             language_neurons.update()
 
-            # 2. Spike'ları topla
-            pre_spikes = pre.get_spikes()
-            lang_spikes = language_neurons.get_spikes()
-            post_spikes = post.get_spikes()
-            
-            # 3. Post-sinaptik akımları hesapla
-            psc_from_sensory = syn_sensory_to_post.update(pre_spikes, post_spikes)
-            psc_from_lang = syn_lang_to_post.update(lang_spikes, post_spikes)
-            
-            # 4. Akımları birleştir ve post katmanını güncelle
-            total_psc = psc_from_sensory + psc_from_lang
-            post.update(total_psc)
-            
-            # 5. Dopamini ayarla
-            with shared.lock:
-                current_dopamine = shared.dopamine
-            syn_sensory_to_post.set_dopamine(current_dopamine)
-            syn_lang_to_post.set_dopamine(current_dopamine)
-            
-            step_count += 1
-        
-        # AGI çıktısı üret
-        if step_count % 200 == 0:
-            # DEĞİŞİKLİK: Konsept aktivasyonunu doğrudan dil katmanından al
-            lang_spikes = language_neurons.get_spikes()
-            concept_activations = _get_active_concepts_from_spikes(lang_spikes)
-            
-            total_activity = np.sum(post.get_spikes()) / post.num_neurons
-            error_signal = np.clip(total_activity * 5.0, 0.0, 1.0)
-
-            if concept_activations or error_signal > ctt.curiosity_threshold:
-                response = ctt.generate_response(concept_activations, error_signal, time.time())
-                if response:
-                    shared.agi_output_queue.put(response)
-        
         try:
-            agi_response = shared.agi_output_queue.get_nowait()
-            print(f"AGI: {agi_response}")
+            rates = shared.sensory_queue.get_nowait()
+            sensory_neurons.apply_poisson_input(rates)
+        except queue.Empty:
+            sensory_neurons.update()
+
+        # Simülasyon adımı
+        sensory_spikes = sensory_neurons.get_spikes()
+        lang_spikes = language_neurons.get_spikes()
+        assoc_spikes = association_neurons.get_spikes()
+        motor_spikes = motor_neurons.get_spikes()
+
+        psc_to_assoc = syn_sensory_to_assoc.update(sensory_spikes, assoc_spikes) + \
+                       syn_motor_to_assoc.update(motor_spikes, assoc_spikes) + \
+                       syn_lang_to_assoc.update(lang_spikes, assoc_spikes)
+        
+        psc_to_motor = syn_assoc_to_motor.update(assoc_spikes, motor_spikes)
+
+        association_neurons.update(psc_to_assoc)
+        motor_neurons.update(psc_to_motor)
+
+        motor_spikes_field.from_numpy(motor_neurons.get_spikes().astype(np.float32))
+
+        with shared.lock:
+            current_dopamine = shared.dopamine
+        
+        decode_and_speak(current_dopamine)
+
+        try:
+            spoken_id = shared.spoken_tokens_queue.get_nowait()
+            np.roll(last_spoken_tokens, 1)
+            last_spoken_tokens[0] = spoken_id
         except queue.Empty:
             pass
 
-        current_time = time.time()
-        if current_time - last_report_time > 5.0:
-            elapsed = current_time - last_report_time
-            fps = step_count / elapsed
-            logger.info(f"FPS: {fps:.1f} | Dopamin: {current_dopamine:.2f}")
-            last_report_time = current_time
-            step_count = 0
+def sensory_thread(shared: SharedState):
+    logger.info("Sensory thread başlatılıyor (simülasyon modu)")
+    while shared.running:
+        try:
+            rates = np.random.rand(SENSORY_NEURONS_COUNT) * 5.0
+            shared.sensory_queue.put(rates, timeout=0.1)
+            time.sleep(0.05)
+        except queue.Full:
+            continue
 
 def main():
-    parser = argparse.ArgumentParser(description="Proto-AGI Taichi Edition")
-    parser.add_argument('--no-camera', action='store_true', help="Kamera girdisini devre dışı bırak")
-    parser.add_argument('--no-audio', action='store_true', help="Mikrofon girdisini devre dışı bırak")
-    args = parser.parse_args()
-    
     shared = SharedState()
     
-    logger.info("Taichi ve dil modülleri ana thread'de başlatılıyor...")
-    # Ağ Katmanları
-    sensory_neurons_count = 12000
-    association_neurons_count = 10000
-    
-    ttc = TextToConcepts(vocab_size=100, concept_neurons=50)
-    ctt = ConceptsToText(ttc, curiosity_threshold=0.8, curiosity_duration=3.0)
-    language_neurons_count = ttc.get_concept_neurons_count()
-
-    pre_sensory = BionicNeuron(sensory_neurons_count, dt=0.001, sparsity=0.9)
-    post_association = BionicNeuron(association_neurons_count, dt=0.001, sparsity=0.9)
-    # DEĞİŞİKLİK: Özel dil katmanı
-    language_neurons = BionicNeuron(language_neurons_count, dt=0.001, sparsity=0.9)
-
-    # Sinapslar
-    syn_sensory_to_post = BionicSynapse(pre_sensory, post_association, sparsity=0.9)
-    # DEĞİŞİKLİK: Dil katmanından ana katmana sinaps
-    syn_lang_to_post = BionicSynapse(language_neurons, post_association, sparsity=0.9)
-    
-    logger.info("Başlatma tamamlandı.")
-
-    core_args = (shared, pre_sensory, post_association, language_neurons, 
-                 syn_sensory_to_post, syn_lang_to_post, ttc, ctt)
-    
     threads = [
-        threading.Thread(target=sensory_thread, name="Sensory", args=(shared, not args.no_camera, not args.no_audio)),
-        threading.Thread(target=core_thread, name="Core", args=core_args)
+        threading.Thread(target=sensory_thread, name="Sensory", args=(shared,)),
+        threading.Thread(target=core_thread, name="Core", args=(shared,))
     ]
     
     for t in threads:
         t.start()
 
-    logger.info("Dialogue arayüzü ana thread'de aktif. Konuşmaya başlayabilirsiniz.")
+    # --- FAZ 3: CÜMLE OLUŞTURMA ---
+    logger.info("AGI Dil Motoru v2.0 aktif. Cümle üretimi bekleniyor...")
+    current_token_ids = []
+    last_token_time = time.time()
+    period_token_id = tokenizer.convert_tokens_to_ids('.')
+
     while shared.running:
         try:
+            # Kullanıcı girdisini al ve token'lara çevir
             text = input("> ")
             if text.lower() in ["quit", "exit", "q"]:
                 break
+            
+            token_ids = tokenizer.encode(text, add_special_tokens=False)
+            shared.self_talk_queue.put(token_ids) # Girdiyi SNN'e besle
 
-            spike_data = ttc.text_to_spike_data(text, current_time=time.time())
-            if spike_data:
-                try:
-                    shared.user_input_queue.put(spike_data, timeout=0.1)
-                except queue.Full:
-                    logger.warning("Kullanıcı girdi kuyruğu dolu, girdi işlenemedi.")
-
+            # Dopamini ayarla
             reward = 0.0
-            if "iyi" in text.lower() or "doğru" in text.lower() or "evet" in text.lower():
-                reward = 1.0
-                logger.info("Pozitif geri bildirim alındı, dopamin artırılıyor.")
-            elif "kötü" in text.lower() or "yanlış" in text.lower() or "hayır" in text.lower():
-                reward = -1.0
-                logger.info("Negatif geri bildirim alındı, dopamin azaltılıyor.")
-
+            if "iyi" in text.lower() or "doğru" in text.lower(): reward = 1.0
+            elif "kötü" in text.lower() or "yanlış" in text.lower(): reward = -1.0
             with shared.lock:
                 shared.dopamine = np.clip(1.0 + reward * 0.5, 0.0, 2.0)
 
         except (EOFError, KeyboardInterrupt):
             break
-    
+
+        # AGI'nin ürettiği token'ları topla ve cümleye çevir
+        try:
+            while not shared.spoken_tokens_queue.empty():
+                token_id = shared.spoken_tokens_queue.get_nowait()
+                current_token_ids.append(token_id)
+                last_token_time = time.time()
+                
+                # Kendi kendine konuşma için geri besle
+                shared.self_talk_queue.put([token_id])
+
+                # Cümle sonu ise veya zaman aşımı olduysa cümleyi yazdır
+                if token_id == period_token_id:
+                    sentence = tokenizer.decode(current_token_ids, skip_special_tokens=True)
+                    print(f"\nAGI: {sentence}")
+                    current_token_ids = []
+        except queue.Empty:
+            pass
+        
+        if current_token_ids and time.time() - last_token_time > 1.5:
+            sentence = tokenizer.decode(current_token_ids, skip_special_tokens=True)
+            print(f"\nAGI: {sentence}")
+            current_token_ids = []
+
     print("\nKapanma sinyali alındı. Proto-AGI durduruluyor...")
     shared.running = False
     for t in threads:

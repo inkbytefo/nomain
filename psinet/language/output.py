@@ -81,7 +81,7 @@ class ConceptsToText:
         # State tracking
         self.recent_concepts = deque(maxlen=10)  # Store recent concept activations
         self.last_output_time = 0.0
-        self.output_cooldown = 1.0  # Minimum seconds between outputs
+        self.output_cooldown = 0.5  # Minimum seconds between outputs
         
         # Curiosity tracking
         self.high_error_start_time = None
@@ -165,20 +165,14 @@ class ConceptsToText:
         Returns:
             Generated response or None
         """
-        # Filter for significant activations
-        significant_concepts = {k: v for k, v in concept_activations.items() if v > 0.3}
+        # Filter for significant activations - lowered threshold
+        significant_concepts = {k: v for k, v in concept_activations.items() if v > 0.1}
         
         if not significant_concepts:
             return None
         
-        # Check for stable activation over recent time windows
-        if len(self.recent_concepts) >= 3:
-            stable_concepts = self._find_stable_concepts(significant_concepts)
-            
-            if stable_concepts:
-                return self._generate_template_response(stable_concepts, current_time)
-        
-        return None
+        # DEĞİŞİKLİK: Doğrudan anlamlı konseptlerle yanıt üret, stabilite bekleme
+        return self._generate_template_response(significant_concepts, current_time)
     
     def _find_stable_concepts(self, current_concepts: Dict[str, float]) -> Dict[str, float]:
         """
@@ -211,8 +205,8 @@ class ConceptsToText:
                 mean_activation = np.mean(activations)
                 activation_variance = np.var(activations)
                 
-                # Consider stable if mean > 0.4 and variance < 0.1
-                if mean_activation > 0.4 and activation_variance < 0.1:
+                # Consider stable if mean > 0.2 and variance < 0.2
+                if mean_activation > 0.2 and activation_variance < 0.2:
                     stable_concepts[concept] = mean_activation
         
         return stable_concepts
