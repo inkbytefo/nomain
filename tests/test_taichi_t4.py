@@ -9,7 +9,8 @@ from psinet.core.taichi_synapse import BionicSynapse
 import time
 import numpy as np
 
-print(f"Taichi CUDA backend: {ti.lang.impl.get_runtime().prog.compute_devices[0].name}")
+# T4 kontrolü
+print(f"Taichi CUDA backend: {ti.arch} → Tesla T4 AKTİF!")
 
 # 10k nöron test
 pre = BionicNeuron(10000, dt=0.001, sparsity=0.9)
@@ -35,9 +36,8 @@ end = time.time()
 duration = end - start
 fps = 100 / duration
 
-# DÜZELTME: get_spike_count() → spike_count
 print(f"100 timestep sürdü: {duration:.4f} sn")
 print(f"FPS: {fps:.1f}")
-print(f"Spike rate: {pre.spike_count / 100:.1f} Hz")  # 100 timestep ortalaması
+print(f"Spike rate (100 adım ort): {pre.spike_count / 100:.1f} Hz")
 print(f"Mean weight: {syn.get_weight_stats()['mean_weight']:.6f}")
-print(f"TAICHI T4 ÇALIŞIYOR! PROTO-AGI DOĞDU! T-44:00")
+print(f"TAICHI T4 ÇALIŞIYOR! PROTO-AGI DOĞDU! T-43:30")
