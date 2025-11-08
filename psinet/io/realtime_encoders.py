@@ -4,7 +4,6 @@
 import numpy as np
 import logging
 from typing import Optional, Tuple
-from brian2 import Hz
 
 # Optional imports for sensory processing
 try:
@@ -294,6 +293,12 @@ class RealtimeEncoder:
         self.audio_encoder = None
         self.is_initialized = False
         
+        # DÜZELTME: If both disabled, mark as initialized
+        if not enable_video and not enable_audio:
+            self.is_initialized = True
+            logger.info("RealtimeEncoder: No sensors enabled - simulation mode")
+            return
+        
         # Initialize video encoder if enabled
         if enable_video and CV2_AVAILABLE:
             video_config = self.config.get('video', {}) if config else {}
@@ -390,6 +395,10 @@ class RealtimeEncoder:
         Returns:
             np.ndarray: Combined spike rates of shape (12000,)
         """
+        # DÜZELTME: Return zeros if not initialized
+        if not self.is_initialized:
+            return np.zeros(12000)
+            
         rates = self.get_spike_rates()
         
         # Ensure we return exactly 12000 values as expected by the AGI system

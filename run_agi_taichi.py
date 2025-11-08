@@ -43,7 +43,7 @@ def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
 
 def dialogue_thread(shared: SharedState):
     ttc = TextToConcepts()
-    ctt = ConceptsToText(ttc)  # DÜZELTME: text_to_concepts arg eklendi
+    ctt = ConceptsToText()  # DÜZELTME: arg olmadan, default TextToConcepts kullanır
     print("Dialogue thread: Hazırım, konuşmaya başla!")
     while shared.running:
         try:
@@ -61,7 +61,7 @@ def core_thread(shared: SharedState):
     post = BionicNeuron(10000, dt=0.001, sparsity=0.9)
     syn = BionicSynapse(pre, post, sparsity=0.9)
     
-    ctt = ConceptsToText(TextToConcepts())  # DÜZELTME: Bağımsız TextToConcepts
+    ctt = ConceptsToText()  # DÜZELTME: arg olmadan
     
     print("Core thread: Taichi SNN aktif – 22k nöron, 55.7 FPS")
     
@@ -99,7 +99,7 @@ def core_thread(shared: SharedState):
         
         # FPS
         if time.time() - last_report > 5.0:
-            print(f"FPS: {step_count / (time.time() - last_report):.1f} | Dopamin: {shared.dopamine:.2f}")  # DÜZELTME: *0.2 silindi
+            print(f"FPS: {step_count / (time.time() - last_report):.1f} | Dopamin: {shared.dopamine:.2f}")
             last_report = time.time()
             step_count = 0
 
