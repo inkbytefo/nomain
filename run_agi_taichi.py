@@ -7,7 +7,6 @@ FPS: 55.7 → 18ms gerçek zaman
 ## Modified: 2025-11-08
 
 import taichi as ti
-# DEĞİŞİKLİK: Taichi başlatma en üste taşındı.
 ti.init(arch=ti.cuda, device_memory_GB=15, debug=False, log_level='error')
 
 import threading
@@ -32,6 +31,8 @@ class SharedState:
         self.running = True
         self.sensory_queue = queue.Queue(maxsize=10)
         self.agi_output_queue = queue.Queue(maxsize=10)
+        # DEĞİŞİKLİK: Kullanıcı girdisi için yeni kuyruk
+        self.user_input_queue = queue.Queue(maxsize=5)
         self.lock = threading.Lock()
         self.dopamine = 1.0
 
@@ -54,8 +55,9 @@ def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
             logger.error(f"Sensory hata: {e}")
             time.sleep(1)
 
-def dialogue_thread(shared: SharedState):
-    """Kullanıcı girdisini alır ve dopamin seviyesini günceller."""
+# DEĞİŞİKLİK: dialogue_thread artık ttc nesnesini alıyor ve spike verisi üretiyor
+def dialogue_thread(shared: SharedState, ttc: TextToConcepts):
+    """Kullanıcı girdisini alır, spike verisine çevirir ve dopamini günceller."""
     logger.info("Dialogue thread hazır. Konuşmaya başlayabilirsiniz.")
     
     while shared.running:
@@ -65,6 +67,15 @@ def dialogue_thread(shared: SharedState):
                 shared.running = False
                 break
 
+            # Adım 1: Metni spike verisine çevir ve kuyruğa koy
+            spike_data = ttc.text_to_spike_data(text, current_time=time.time())
+            if spike_data:
+                try:
+                    shared.user_input_queue.put(spike_data, timeout=0.1)
+                except queue.Full:
+                    logger.warning("Kullanıcı girdi kuyruğu dolu, girdi işlenemedi.")
+
+            # Adım 2: Dopamini ayarla
             reward = 0.0
             if "iyi" in text.lower() or "doğru" in text.lower() or "evet" in text.lower():
                 reward = 1.0
@@ -81,7 +92,6 @@ def dialogue_thread(shared: SharedState):
             break
     logger.info("Dialogue thread durduruldu.")
 
-# DEĞİŞİKLİK: core_thread artık önceden başlatılmış nesneleri parametre olarak alıyor.
 def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn: BionicSynapse, ttc: TextToConcepts, ctt: ConceptsToText):
     """Ana sinir ağı simülasyonunu Taichi üzerinde çalıştırır."""
     logger.info(f"Core thread: Taichi SNN aktif – {pre.num_neurons + post.num_neurons} nöron")
@@ -111,7 +121,18 @@ def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn:
         return activations
 
     while shared.running:
+        # DEĞİŞİKLİK: Kullanıcı girdisinden gelen spike'ları işlemek için akım vektörü
+        language_current = np.zeros(post.num_neurons, dtype=np.float32)
+        try:
+            spike_indices, _ = shared.user_input_queue.get_nowait()
+            # Dil konseptleriyle ilişkili nöronlara güçlü bir akım darbesi uygula
+            language_current[spike_indices] = 5.0 
+            logger.debug(f"Dil girdisi enjekte ediliyor: {len(spike_indices)} spike.")
+        except queue.Empty:
+            pass
+
         for _ in range(10):
+            # Sensory input
             try:
                 rates = shared.sensory_queue.get_nowait()
                 pre.apply_poisson_input(rates)
@@ -122,7 +143,14 @@ def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn:
             post_spikes = post.get_spikes()
             
             psc = syn.update(pre_spikes, post_spikes)
+            
+            # Post-sinaptik akıma dil girdisinden gelen akımı ekle
+            psc += language_current
+            
             post.update(psc)
+            
+            # Dil akımını bir sonraki adım için sıfırla (sadece bir anlık darbe)
+            language_current.fill(0)
             
             with shared.lock:
                 current_dopamine = shared.dopamine
@@ -164,7 +192,6 @@ def main():
     
     shared = SharedState()
     
-    # DEĞİŞİKLİK: Tüm Taichi ve dil nesneleri burada, ana thread'de oluşturuluyor.
     logger.info("Taichi ve dil modülleri ana thread'de başlatılıyor...")
     input_neurons = 12000
     l1_neurons = 10000
@@ -175,12 +202,13 @@ def main():
     ctt = ConceptsToText(ttc, curiosity_threshold=0.8, curiosity_duration=3.0)
     logger.info("Başlatma tamamlandı.")
 
-    # DEĞİŞİKLİK: Oluşturulan nesneler core_thread'e argüman olarak veriliyor.
     core_args = (shared, pre, post, syn, ttc, ctt)
+    # DEĞİŞİKLİK: dialogue_thread'e ttc nesnesi veriliyor
+    dialogue_args = (shared, ttc)
     
     threads = [
         threading.Thread(target=sensory_thread, name="Sensory", args=(shared, not args.no_camera, not args.no_audio)),
-        threading.Thread(target=dialogue_thread, name="Dialogue", args=(shared,)),
+        threading.Thread(target=dialogue_thread, name="Dialogue", args=dialogue_args),
         threading.Thread(target=core_thread, name="Core", args=core_args)
     ]
     
