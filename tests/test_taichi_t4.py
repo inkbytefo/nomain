@@ -2,14 +2,14 @@
 ## Modified: 2025-11-08
 
 import taichi as ti
-ti.init(arch=ti.cuda, device_memory_GB=15, debug=False)
+ti.init(arch=ti.cuda, device_memory_GB=15, debug=False, log_level='error')
 
 from psinet.core.taichi_neuron import BionicNeuron
 from psinet.core.taichi_synapse import BionicSynapse
 import time
 import numpy as np
 
-print(f"Taichi CUDA backend: {ti.cfg.arch}")
+print(f"Taichi CUDA backend: {ti.lang.impl.get_runtime().prog.compute_devices[0].name}")
 
 # 10k nöron test
 pre = BionicNeuron(10000, dt=0.001, sparsity=0.9)
@@ -20,8 +20,7 @@ syn = BionicSynapse(pre, post, sparsity=0.9)
 input_current = np.random.uniform(0, 2, 10000).astype(np.float32)
 
 # Dopamin test
-syn.set_dopamine(0.5)  # LTD artmalı
-syn.set_dopamine(1.5)  # LTD azalmalı
+syn.set_dopamine(1.5)
 
 # 100 timestep
 start = time.time()
@@ -36,8 +35,9 @@ end = time.time()
 duration = end - start
 fps = 100 / duration
 
+# DÜZELTME: get_spike_count() → spike_count
 print(f"100 timestep sürdü: {duration:.4f} sn")
 print(f"FPS: {fps:.1f}")
-print(f"Spike rate: {pre.get_spike_count() / 10000:.1f} Hz")
+print(f"Spike rate: {pre.spike_count / 100:.1f} Hz")  # 100 timestep ortalaması
 print(f"Mean weight: {syn.get_weight_stats()['mean_weight']:.6f}")
-print(f"Taichi T4 ÇALIŞIYOR! Proto-AGI doğdu!")
+print(f"TAICHI T4 ÇALIŞIYOR! PROTO-AGI DOĞDU! T-44:00")
