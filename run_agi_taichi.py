@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(threadName)s - %
 logger = logging.getLogger(__name__)
 
 # --- FAZ 1: TOKENIZER ALTYAPISI ---
-TOKENIZER_MODEL = "bert-base-turkish-cased"
+TOKENIZER_MODEL = "dbmdz/bert-base-turkish-cased"
 logger.info(f"Hugging Face tokenizer yükleniyor: {TOKENIZER_MODEL}")
 tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_MODEL)
 VOCAB_SIZE = tokenizer.vocab_size
