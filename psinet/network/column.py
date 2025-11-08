@@ -1,4 +1,4 @@
-from brian2 import ms
+from brian2 import ms, Synapses
 from ..core.neuron import BionicNeuron
 from ..core.synapse import BionicSynapse
 
@@ -44,6 +44,12 @@ class BionicColumn:
         self.I_to_E_synapse.synapses.connect() # Her engelleyici her uyarıcıyı baskılar
         self.I_to_E_synapse.synapses.w = -3.0 # Çok güçlü, negatif (baskılayıcı) bağlantı
 
+        # L1 içi zayıf lateral engelleme: Uyarıcılar birbirini hafifçe baskılar (soft WTA)
+        self.E_lateral_inhib = Synapses(self.excitatory_neurons.group,
+                                        self.excitatory_neurons.group,
+                                        on_pre='v_post -= 0.2')
+        self.E_lateral_inhib.connect(condition='i != j')
+
         print("BionicColumn oluşturuldu.")
 
     @property
@@ -56,5 +62,6 @@ class BionicColumn:
             self.inhibitory_neurons.group,
             self.E_to_E_synapse.synapses,
             self.E_to_I_synapse.synapses,
-            self.I_to_E_synapse.synapses
+            self.I_to_E_synapse.synapses,
+            self.E_lateral_inhib
         ]
