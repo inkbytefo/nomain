@@ -61,16 +61,21 @@ class ConceptsToText:
         # Concept categories for template selection
         self.object_words = {
             'cup', 'ball', 'book', 'phone', 'key', 'pen', 'paper', 'computer',
-            'table', 'chair', 'door', 'window', 'light', 'bottle', 'glass'
+            'table', 'chair', 'door', 'window', 'light', 'bottle', 'glass',
+            'fin', 'top', 'kitap', 'telefon', 'anahtar', 'kalem', 'kağıt', 'bilgisayar',
+            'masa', 'sandalye', 'kapı', 'pencere', 'ışık', 'şişe', 'bardak'
         }
         
         self.property_words = {
             'big', 'small', 'red', 'blue', 'green', 'white', 'black', 'yellow',
-            'hot', 'cold', 'heavy', 'light', 'soft', 'hard', 'smooth', 'rough'
+            'hot', 'cold', 'heavy', 'light', 'soft', 'hard', 'smooth', 'rough',
+            'büyük', 'küçük', 'kırmızı', 'mavi', 'yeşil', 'beyaz', 'siyah', 'sarı',
+            'sıcak', 'soğuk', 'ağır', 'hafif', 'yumuşak', 'sert', 'pürüzsüz', 'kaba'
         }
         
         self.action_words = {
-            'see', 'hear', 'touch', 'move', 'stop', 'go', 'take', 'put'
+            'see', 'hear', 'touch', 'move', 'stop', 'go', 'take', 'put',
+            'gör', 'duy', 'dokun', 'hareket', 'dur', 'git', 'al', 'koy'
         }
         
         # State tracking

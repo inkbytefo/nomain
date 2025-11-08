@@ -36,7 +36,6 @@ class SharedState:
         self.dopamine = 1.0
 
 def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
-    """Sensör verilerini (kamera/mikrofon veya simülasyon) işler ve ana kuyruğa yazar."""
     logger.info(f"Sensory thread başlatılıyor (video: {enable_video}, audio: {enable_audio})")
     encoder = RealtimeEncoder(enable_video=enable_video, enable_audio=enable_audio)
     
@@ -54,9 +53,11 @@ def sensory_thread(shared: SharedState, enable_video=True, enable_audio=True):
             logger.error(f"Sensory hata: {e}")
             time.sleep(1)
 
-def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn: BionicSynapse, ttc: TextToConcepts, ctt: ConceptsToText):
-    """Ana sinir ağı simülasyonunu Taichi üzerinde çalıştırır."""
-    logger.info(f"Core thread: Taichi SNN aktif – {pre.num_neurons + post.num_neurons} nöron")
+# DEĞİŞİKLİK: core_thread artık daha fazla nesne alıyor (yeni dil katmanı ve sinapsı)
+def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, language_neurons: BionicNeuron, 
+                syn_sensory_to_post: BionicSynapse, syn_lang_to_post: BionicSynapse, 
+                ttc: TextToConcepts, ctt: ConceptsToText):
+    logger.info(f"Core thread: Taichi SNN aktif – {pre.num_neurons + post.num_neurons + language_neurons.num_neurons} nöron")
     
     step_count = 0
     last_report_time = time.time()
@@ -67,6 +68,8 @@ def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn:
             return {}
         
         concept_counts = {}
+        # DEĞİŞİKLİK: Artık post nöronlarındaki aktiviteyi değil, dil nöronlarındaki aktiviteyi yorumluyoruz.
+        # Bu daha temiz bir sinyal sağlar.
         max_concept_neuron_idx = ttc.get_concept_neurons_count()
 
         for idx in active_indices:
@@ -83,47 +86,56 @@ def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn:
         return activations
 
     while shared.running:
-        # Her 10ms'lik döngünün başında kullanıcı girdisini bir kez kontrol et
-        language_current = np.zeros(post.num_neurons, dtype=np.float32)
+        # Kullanıcı girdisini dil nöronlarına uygula
         try:
             spike_indices, _ = shared.user_input_queue.get_nowait()
-            # DEĞİŞİKLİK: Daha düşük seviyeli, sürekli bir akım uygula
-            language_current[spike_indices] = 1.5 
-            logger.info(f"Dil girdisi alınıyor: {len(spike_indices)} spike enjekte edilecek.")
+            # Dil nöronlarına Poisson girdisi uygula
+            lang_rates = np.zeros(language_neurons.num_neurons, dtype=np.float32)
+            lang_rates[spike_indices] = 150.0 # Hz cinsinden yüksek ateşleme oranı
+            language_neurons.apply_poisson_input(lang_rates)
+            logger.info(f"Dil girdisi alınıyor: {len(spike_indices)} spike konsepti aktive ediliyor.")
         except queue.Empty:
-            pass
+            language_neurons.update() # Girdi yoksa normal şekilde güncelle
 
-        # 10ms'lik simülasyon adımı (10 x 1ms Taichi adımı)
+        # 10ms'lik simülasyon adımı
         for _ in range(10):
-            # Sensory input
+            # 1. Sensör ve dil katmanlarını güncelle
             try:
                 rates = shared.sensory_queue.get_nowait()
                 pre.apply_poisson_input(rates)
             except queue.Empty:
                 pre.update()
+            
+            language_neurons.update()
 
+            # 2. Spike'ları topla
             pre_spikes = pre.get_spikes()
+            lang_spikes = language_neurons.get_spikes()
             post_spikes = post.get_spikes()
             
-            psc = syn.update(pre_spikes, post_spikes)
+            # 3. Post-sinaptik akımları hesapla
+            psc_from_sensory = syn_sensory_to_post.update(pre_spikes, post_spikes)
+            psc_from_lang = syn_lang_to_post.update(lang_spikes, post_spikes)
             
-            # DEĞİŞİKLİK: Dil akımını her adımda post-sinaptik akıma ekle
-            psc += language_current
+            # 4. Akımları birleştir ve post katmanını güncelle
+            total_psc = psc_from_sensory + psc_from_lang
+            post.update(total_psc)
             
-            post.update(psc)
-            
+            # 5. Dopamini ayarla
             with shared.lock:
                 current_dopamine = shared.dopamine
-            syn.set_dopamine(current_dopamine)
+            syn_sensory_to_post.set_dopamine(current_dopamine)
+            syn_lang_to_post.set_dopamine(current_dopamine)
             
             step_count += 1
         
-        # AGI çıktısı üret (her 200ms'de bir)
+        # AGI çıktısı üret
         if step_count % 200 == 0:
-            post_spikes = post.get_spikes()
-            concept_activations = _get_active_concepts_from_spikes(post_spikes)
+            # DEĞİŞİKLİK: Konsept aktivasyonunu doğrudan dil katmanından al
+            lang_spikes = language_neurons.get_spikes()
+            concept_activations = _get_active_concepts_from_spikes(lang_spikes)
             
-            total_activity = np.sum(post_spikes) / post.num_neurons
+            total_activity = np.sum(post.get_spikes()) / post.num_neurons
             error_signal = np.clip(total_activity * 5.0, 0.0, 1.0)
 
             if concept_activations or error_signal > ctt.curiosity_threshold:
@@ -131,14 +143,12 @@ def core_thread(shared: SharedState, pre: BionicNeuron, post: BionicNeuron, syn:
                 if response:
                     shared.agi_output_queue.put(response)
         
-        # AGI yanıtlarını yazdır
         try:
             agi_response = shared.agi_output_queue.get_nowait()
             print(f"AGI: {agi_response}")
         except queue.Empty:
             pass
 
-        # Performans raporu
         current_time = time.time()
         if current_time - last_report_time > 5.0:
             elapsed = current_time - last_report_time
@@ -156,16 +166,28 @@ def main():
     shared = SharedState()
     
     logger.info("Taichi ve dil modülleri ana thread'de başlatılıyor...")
-    input_neurons = 12000
-    l1_neurons = 10000
-    pre = BionicNeuron(input_neurons, dt=0.001, sparsity=0.9)
-    post = BionicNeuron(l1_neurons, dt=0.001, sparsity=0.9)
-    syn = BionicSynapse(pre, post, sparsity=0.9)
+    # Ağ Katmanları
+    sensory_neurons_count = 12000
+    association_neurons_count = 10000
+    
     ttc = TextToConcepts(vocab_size=100, concept_neurons=50)
     ctt = ConceptsToText(ttc, curiosity_threshold=0.8, curiosity_duration=3.0)
+    language_neurons_count = ttc.get_concept_neurons_count()
+
+    pre_sensory = BionicNeuron(sensory_neurons_count, dt=0.001, sparsity=0.9)
+    post_association = BionicNeuron(association_neurons_count, dt=0.001, sparsity=0.9)
+    # DEĞİŞİKLİK: Özel dil katmanı
+    language_neurons = BionicNeuron(language_neurons_count, dt=0.001, sparsity=0.9)
+
+    # Sinapslar
+    syn_sensory_to_post = BionicSynapse(pre_sensory, post_association, sparsity=0.9)
+    # DEĞİŞİKLİK: Dil katmanından ana katmana sinaps
+    syn_lang_to_post = BionicSynapse(language_neurons, post_association, sparsity=0.9)
+    
     logger.info("Başlatma tamamlandı.")
 
-    core_args = (shared, pre, post, syn, ttc, ctt)
+    core_args = (shared, pre_sensory, post_association, language_neurons, 
+                 syn_sensory_to_post, syn_lang_to_post, ttc, ctt)
     
     threads = [
         threading.Thread(target=sensory_thread, name="Sensory", args=(shared, not args.no_camera, not args.no_audio)),
@@ -175,7 +197,6 @@ def main():
     for t in threads:
         t.start()
 
-    # DEĞİŞİKLİK: Ana thread artık kullanıcı girdisini yönetiyor.
     logger.info("Dialogue arayüzü ana thread'de aktif. Konuşmaya başlayabilirsiniz.")
     while shared.running:
         try:
@@ -202,9 +223,8 @@ def main():
                 shared.dopamine = np.clip(1.0 + reward * 0.5, 0.0, 2.0)
 
         except (EOFError, KeyboardInterrupt):
-            break # Döngüden çık ve programı kapat
+            break
     
-    # Kapanma süreci
     print("\nKapanma sinyali alındı. Proto-AGI durduruluyor...")
     shared.running = False
     for t in threads:
