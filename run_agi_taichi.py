@@ -20,7 +20,7 @@ from psinet.core.taichi_neuron import BionicNeuron
 from psinet.core.taichi_synapse import BionicSynapse
 from psinet.io.realtime_encoders import RealtimeEncoder
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(threadName)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(threadName)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # --- FAZ 1: TOKENIZER ALTYAPISI ---
@@ -57,7 +57,14 @@ def core_thread(shared: SharedState, sensory_neurons, association_neurons, motor
         try:
             token_ids = shared.self_talk_queue.get_nowait()
             lang_rates = np.zeros(LANGUAGE_NEURONS_COUNT, dtype=np.float32)
-            lang_rates[token_ids] = 150.0
+            # Token ID'leri integer list olarak al
+            if isinstance(token_ids, list):
+                for tid in token_ids:
+                    if 0 <= tid < LANGUAGE_NEURONS_COUNT:
+                        lang_rates[tid] = 500.0  # Daha yüksek input
+            else:
+                if 0 <= token_ids < LANGUAGE_NEURONS_COUNT:
+                    lang_rates[token_ids] = 500.0
             language_neurons.apply_poisson_input(lang_rates)
         except queue.Empty:
             language_neurons.update()
@@ -94,14 +101,23 @@ def core_thread(shared: SharedState, sensory_neurons, association_neurons, motor
             shared.spoken_tokens_queue.put(int(spoken_id))
             np.roll(last_spoken_tokens, 1)
             last_spoken_tokens[0] = int(spoken_id)
+            logger.debug(f"Token üretildi: {spoken_id}")
+        
+        # Debug: Her 100 adımda bir spike istatistikleri
+        if int(shared.dopamine * 100) % 100 == 0:
+            motor_spikes = motor_neurons.get_spikes()
+            spike_count = np.sum(motor_spikes)
+            if spike_count > 0:
+                logger.info(f"Motor spike count: {spike_count}, Dopamine: {current_dopamine}")
 
 def sensory_thread(shared: SharedState):
     logger.info("Sensory thread başlatılıyor (simülasyon modu)")
     while shared.running:
         try:
-            rates = np.random.rand(SENSORY_NEURONS_COUNT) * 5.0
+            # Daha yüksek sensory input için
+            rates = np.random.rand(SENSORY_NEURONS_COUNT) * 20.0  # 5.0 -> 20.0
             shared.sensory_queue.put(rates, timeout=0.1)
-            time.sleep(0.05)
+            time.sleep(0.02)  # Daha hızlı güncelleme
         except queue.Full:
             continue
 
@@ -166,11 +182,23 @@ def main():
                 max_spikes = current_spikes
                 best_token_id = i
         
-        return best_token_id if max_spikes > 0.8 else -1  # Ateşleme eşiği
+        return best_token_id if max_spikes > 0.1 else -1  # Daha düşük ateşleme eşiği
     
     # Pre-compile decoder kernel with dummy data
     motor_spikes_field.from_numpy(dummy_motor_input)
     decode_and_speak(1.0, dummy_last_tokens)
+    
+    # Debug için bazı parametreleri ayarla
+    logger.info("SNN parametreleri ayarlanıyor...")
+    sensory_neurons.set_parameters(threshold_initial=0.5)  # Daha düşük eşik
+    association_neurons.set_parameters(threshold_initial=0.5)
+    motor_neurons.set_parameters(threshold_initial=0.5)
+    language_neurons.set_parameters(threshold_initial=0.5)
+    
+    # Daha yüksek dopamin seviyesi
+    shared.dopamine = 2.0
+    
+    logger.info("SNN parametreleri başarıyla ayarlandı.")
     
     logger.info("Tüm Taichi kernel'leri başarıyla pre-compile edildi.")
     
