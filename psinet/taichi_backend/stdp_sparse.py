@@ -48,8 +48,8 @@ class STDPSparseKernel:
         self.w_max = ti.field(dtype=ti.f32, shape=())  # Maximum weight
         self.dopamine = ti.field(dtype=ti.f32, shape=())  # Global dopamine level
         
-        # Sparse matrix builder for efficient updates
-        self.sparse_builder = ti.sparse_matrix_builder(pre_neurons, post_neurons, max_num_elements=int(pre_neurons * post_neurons * (1 - sparsity)))
+        # Sparse matrix builder for efficient updates (not used in current implementation)
+        # self.sparse_builder = ti.sparse_matrix_builder(pre_neurons, post_neurons, max_num_elements=int(pre_neurons * post_neurons * (1 - sparsity)))
         
         # Initialize parameters
         self._init_parameters()
