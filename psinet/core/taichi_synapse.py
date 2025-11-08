@@ -95,7 +95,7 @@ class BionicSynapse:
             post_spikes = self.post_neurons.get_spikes()
         
         # Update kernel and get postsynaptic current
-        self.postsynaptic_current = self.kernel.step(pre_spikes, post_spikes)
+        self.postsynaptic_current = self.kernel.update(pre_spikes, post_spikes)
         
         # Update metrics
         self.simulation_time += self.dt
