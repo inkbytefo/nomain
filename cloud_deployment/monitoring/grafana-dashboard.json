@@ -1,0 +1,67 @@
+## Developer: inkbytefo
+## Modified: 2025-11-09
+
+{
+  "dashboard": {
+    "id": null,
+    "title": "Chimera AGI Dashboard",
+    "tags": ["chimera", "agi"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Neural Activity",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(neural_spikes_total[5m])",
+            "legendFormat": "{{neuron_layer}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Dopamine Levels",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "dopamine_level",
+            "legendFormat": "Dopamine"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Prediction Error",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "prediction_error",
+            "legendFormat": "Error"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "System Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(cpu_usage_total[5m])",
+            "legendFormat": "CPU"
+          },
+          {
+            "expr": "memory_usage_bytes",
+            "legendFormat": "Memory"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      }
+    ],
+    "time": {"from": "now-1h", "to": "now"},
+    "refresh": "5s"
+  }
+}

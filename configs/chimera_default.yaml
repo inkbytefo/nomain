@@ -1,0 +1,231 @@
+## Developer: inkbytefo
+## Modified: 2025-11-09
+
+# Project Chimera - AGI Architecture Configuration
+# Grounded Cognition with SNN-based World Model
+run_id: chimera_default_v1
+
+run_params:
+  simulation_duration_sec: 60
+  chunk_duration_ms: 10
+
+# Module 1: Core PSINet Taichi Engine
+network_params:
+  neurons:
+    sensory_vision:
+      count: 784  # 28x28 input from visual cortex
+      tau: 0.01
+      threshold_initial: 1.0
+      reset_v: 0.0
+      refractory: 0.005
+      tau_theta: 0.1
+      delta_theta: 0.1
+      dt: 0.001
+      sparsity: 0.9
+    
+    sensory_audio:
+      count: 1024  # Audio frequency bins
+      tau: 0.01
+      threshold_initial: 1.0
+      reset_v: 0.0
+      refractory: 0.005
+      tau_theta: 0.1
+      delta_theta: 0.1
+      dt: 0.001
+      sparsity: 0.9
+    
+    associative_cortex:
+      count: 4000  # Large associative layer for concept formation
+      tau: 0.02
+      threshold_initial: 0.8
+      reset_v: 0.0
+      refractory: 0.005
+      tau_theta: 0.15
+      delta_theta: 0.05
+      dt: 0.001
+      sparsity: 0.9
+    
+    hippocampus:
+      count: 2000  # Memory formation and recall
+      tau: 0.025
+      threshold_initial: 0.9
+      reset_v: 0.0
+      refractory: 0.008
+      tau_theta: 0.2
+      delta_theta: 0.08
+      dt: 0.001
+      sparsity: 0.85
+    
+    language_concepts:
+      count: 1000  # Concept representations for language
+      tau: 0.015
+      threshold_initial: 0.7
+      reset_v: 0.0
+      refractory: 0.004
+      tau_theta: 0.12
+      delta_theta: 0.06
+      dt: 0.001
+      sparsity: 0.9
+    
+    motor_output:
+      count: 500  # Action and response generation
+      tau: 0.01
+      threshold_initial: 1.2
+      reset_v: 0.0
+      refractory: 0.003
+      tau_theta: 0.08
+      delta_theta: 0.04
+      dt: 0.001
+      sparsity: 0.9
+
+  synapses:
+    vision_to_assoc:
+      from: sensory_vision
+      to: associative_cortex
+      tau_pre: 0.02
+      tau_post: 0.02
+      w_max: 0.01
+      a_pre: 0.01
+      a_post: -0.0105
+      initial_weight_max: 0.01
+      dt: 0.001
+      sparsity: 0.9
+    
+    audio_to_assoc:
+      from: sensory_audio
+      to: associative_cortex
+      tau_pre: 0.02
+      tau_post: 0.02
+      w_max: 0.008
+      a_pre: 0.008
+      a_post: -0.008
+      initial_weight_max: 0.008
+      dt: 0.001
+      sparsity: 0.9
+    
+    assoc_to_hippocampus:
+      from: associative_cortex
+      to: hippocampus
+      tau_pre: 0.025
+      tau_post: 0.025
+      w_max: 0.015
+      a_pre: 0.012
+      a_post: -0.012
+      initial_weight_max: 0.015
+      dt: 0.001
+      sparsity: 0.85
+    
+    hippocampus_to_assoc:
+      from: hippocampus
+      to: associative_cortex
+      tau_pre: 0.025
+      tau_post: 0.025
+      w_max: 0.012
+      a_pre: 0.01
+      a_post: -0.01
+      initial_weight_max: 0.012
+      dt: 0.001
+      sparsity: 0.85
+    
+    assoc_to_language:
+      from: associative_cortex
+      to: language_concepts
+      tau_pre: 0.02
+      tau_post: 0.02
+      w_max: 0.01
+      a_pre: 0.009
+      a_post: -0.009
+      initial_weight_max: 0.01
+      dt: 0.001
+      sparsity: 0.9
+    
+    language_to_assoc:
+      from: language_concepts
+      to: associative_cortex
+      tau_pre: 0.02
+      tau_post: 0.02
+      w_max: 0.01
+      a_pre: 0.009
+      a_post: -0.009
+      initial_weight_max: 0.01
+      dt: 0.001
+      sparsity: 0.9
+    
+    assoc_to_motor:
+      from: associative_cortex
+      to: motor_output
+      tau_pre: 0.015
+      tau_post: 0.015
+      w_max: 0.02
+      a_pre: 0.015
+      a_post: -0.015
+      initial_weight_max: 0.02
+      dt: 0.001
+      sparsity: 0.9
+
+# Module 2: Sensory Cortex Configuration
+sensory_params:
+  vision:
+    enable: true
+    camera_id: 0
+    target_size: [28, 28]
+    change_threshold: 30
+    max_rate: 150.0
+    feature_extraction:
+      enable_edges: true
+      enable_corners: true
+      enable_colors: true
+  
+  audio:
+    enable: true
+    sample_rate: 44100
+    chunk_size: 1024
+    freq_bins: 32
+    max_rate: 150.0
+
+# Module 3: World Model Configuration
+world_model_params:
+  concept_formation_threshold: 0.5
+  pattern_stability_time: 2.0  # seconds
+  memory_consolidation_interval: 10.0  # seconds
+  prediction_error_window: 1.0  # seconds
+
+# Module 4: Language Module Configuration
+language_params:
+  enable: true
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  vocab_size: 1000
+  concept_neurons: 1000
+  response_generation:
+    template_based: true
+    llm_fallback: false
+    llm_model: "gpt2"  # Optional fallback
+
+# Module 5: Motivation System Configuration
+motivation_params:
+  curiosity:
+    enable: true
+    prediction_error_scale: 1.0
+    novelty_threshold: 0.3
+    dopamine_decay: 0.95
+  
+  goal_orientation:
+    enable: true
+    goal_persistence: 5.0  # seconds
+    reward_scale: 1.0
+    punishment_scale: -0.5
+
+# Monitoring and Output
+monitor_params:
+  record_spikes: true
+  record_weights: true
+  record_concepts: true
+  record_language: true
+  save_interval: 5.0  # seconds
+
+output_params:
+  base_output_dir: outputs/chimera
+  save_raw_data: true
+  save_plots: true
+  save_concepts: true
+  save_language: true

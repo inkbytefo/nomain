@@ -1,0 +1,9 @@
+## Developer: inkbytefo
+## Modified: 2025-11-09
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chimera-agi
+  labels:
+    name: chimera-agi

@@ -1,0 +1,82 @@
+## Developer: inkbytefo
+## Modified: 2025-11-09
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chimera-agi
+  namespace: chimera-agi
+  labels:
+    app: chimera-agi
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chimera-agi
+  template:
+    metadata:
+      labels:
+        app: chimera-agi
+    spec:
+      containers:
+      - name: chimera-agi
+        image: chimera-agi:latest
+        ports:
+        - containerPort: 8000
+          name: http
+        - containerPort: 8080
+          name: metrics
+        env:
+        - name: CHIMERA_ENV
+          value: "production"
+        - name: CHIMERA_CONFIG_PATH
+          value: "/app/config/chimera_cloud.yaml"
+        - name: CHIMERA_LOG_LEVEL
+          value: "INFO"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        - name: data
+          mountPath: /app/data
+        - name: logs
+          mountPath: /app/logs
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: config
+        configMap:
+          name: chimera-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: chimera-data-pvc
+      - name: logs
+        persistentVolumeClaim:
+          claimName: chimera-logs-pvc
+      nodeSelector:
+        accelerator: nvidia-tesla-k80
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule

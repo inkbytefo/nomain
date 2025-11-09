@@ -1,0 +1,46 @@
+{
+  "project": "Chimera AGI",
+  "version": "1.0.0",
+  "deployment_type": "Cloud Native",
+  "components": {
+    "docker": {
+      "base_image": "python:3.11-slim",
+      "ports": [
+        "8000",
+        "8080"
+      ],
+      "health_check": "/health"
+    },
+    "kubernetes": {
+      "namespace": "chimera-agi",
+      "replicas": 2,
+      "service_type": "LoadBalancer",
+      "storage": "110GB total"
+    },
+    "monitoring": {
+      "prometheus": "Enabled",
+      "grafana": "Enabled",
+      "metrics_port": 8080
+    }
+  },
+  "requirements": {
+    "min_cpu": "2 cores",
+    "min_memory": "4GB",
+    "recommended_cpu": "4 cores",
+    "recommended_memory": "8GB",
+    "gpu_support": "Optional but recommended"
+  },
+  "deployment_commands": {
+    "build": "./cloud_deployment/scripts/build.sh",
+    "deploy": "./cloud_deployment/scripts/deploy.sh [environment]",
+    "test": "./cloud_deployment/scripts/test.sh",
+    "cleanup": "./cloud_deployment/scripts/cleanup.sh"
+  },
+  "configuration_files": [
+    "cloud_deployment/docker/Dockerfile",
+    "cloud_deployment/docker/docker-compose.yml",
+    "cloud_deployment/kubernetes/base/kustomization.yaml",
+    "cloud_deployment/requirements-cloud.txt",
+    "cloud_deployment/monitoring/prometheus.yml"
+  ]
+}
