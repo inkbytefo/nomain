@@ -1,0 +1,86 @@
+run_params:
+  simulation_duration_sec: 300  # 5 dakika test
+  chunk_duration_ms: 10
+  gpu_enabled: true
+  gpu_memory_fraction: 0.8  # T4 için 80% GPU kullanımı
+
+network_params:
+  neurons:
+    sensory_vision:
+      count: 784  # 28x28 MNIST
+      threshold: -50.0
+      reset: -65.0
+      refractory: 5.0
+    associative_cortex:
+      count: 2000  # T4 için optimize edilmiş
+      threshold: -50.0
+      reset: -65.0
+      refractory: 5.0
+    language_concepts:
+      count: 500   # Daha küçük dil katmanı
+      threshold: -50.0
+      reset: -65.0
+      refractory: 5.0
+  
+  synapses:
+    vision_to_assoc:
+      from: sensory_vision
+      to: associative_cortex
+      count: 50000  # T4 için optimize edilmiş
+      w_max: 1.0
+      w_init: 0.1
+      stdp_enabled: true
+    assoc_to_language:
+      from: associative_cortex
+      to: language_concepts
+      count: 25000
+      w_max: 1.0
+      w_init: 0.1
+      stdp_enabled: true
+
+modules:
+  sensory_cortex:
+    enabled: true
+    input_type: "mnist"  # Test için MNIST verisi
+    preprocessing:
+      resize: [28, 28]
+      normalize: true
+  
+  world_model:
+    enabled: true
+    predictor_type: "linear"
+    memory_size: 500
+    learning_rate: 0.01
+  
+  language_module:
+    enabled: true
+    model_name: "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dim: 384  # T4 için daha küçük embedding
+    response_generation:
+      template_based: true
+      llm_fallback: false
+  
+  motivation_system:
+    enabled: true
+    dopamine_params:
+      baseline: 1.0
+      k_gain: 2.0
+      time_constant: 0.5
+    curiosity:
+      enable: true
+      scale: 1.0
+    goal_orientation:
+      enable: true
+      scale: 1.0
+
+logging:
+  level: "INFO"
+  format: "structured"
+  file_output: true
+  console_output: true
+
+monitoring:
+  enabled: true
+  metrics_port: 8080
+  health_check_port: 8000
+  gpu_monitoring: true

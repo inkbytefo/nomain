@@ -111,6 +111,8 @@ class STDPSparseKernel:
         nz = w[w > 0]
         return {
             'mean_weight': float(nz.mean()) if len(nz) > 0 else 0.0,
+            'max_weight': float(nz.max()) if len(nz) > 0 else 0.0,
+            'min_weight': float(nz.min()) if len(nz) > 0 else 0.0,
             'sparsity': 1.0 - len(nz) / w.size,
             'total_connections': len(nz)
         }
